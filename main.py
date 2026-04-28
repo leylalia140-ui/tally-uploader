@@ -160,6 +160,11 @@ async def process_all_uploads(uploads: list[dict]) -> None:
 # Endpoints
 # ──────────────────────────────────────────────────────────────
 
+@app.get("/webhook/tally")
+async def tally_webhook_verify():
+    return {"status": "ok"}
+
+
 @app.post("/webhook/tally")
 async def tally_webhook(
     request: Request,
