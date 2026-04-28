@@ -1,23 +1,14 @@
-from pydantic_settings import BaseSettings
-from typing import Optional
+import os
 
 
-class Settings(BaseSettings):
-    # Google Drive
-    GOOGLE_DRIVE_ROOT_FOLDER_ID: str = "1ofu3b6xK4Hdnk0n_vGD-y9cQNSg7lY2U"
-
-    # Telegram Bot
-    TELEGRAM_BOT_TOKEN: str
-
-    # Tally Webhook Secret (optional but recommended)
-    TALLY_SIGNING_SECRET: Optional[str] = None
-
-    # Server
-    PORT: int = 8000
-    HOST: str = "0.0.0.0"
-
-    class Config:
-        env_file = ".env"
+class Settings:
+    GOOGLE_DRIVE_ROOT_FOLDER_ID: str = os.environ.get(
+        "GOOGLE_DRIVE_ROOT_FOLDER_ID", "1ofu3b6xK4Hdnk0n_vGD-y9cQNSg7lY2U"
+    )
+    TELEGRAM_BOT_TOKEN: str = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    TALLY_SIGNING_SECRET: str | None = os.environ.get("TALLY_SIGNING_SECRET")
+    PORT: int = int(os.environ.get("PORT", "8000"))
+    HOST: str = os.environ.get("HOST", "0.0.0.0")
 
 
 settings = Settings()
