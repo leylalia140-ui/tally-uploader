@@ -1,6 +1,4 @@
 import io
-import base64
-import json
 import logging
 import os
 from typing import Optional
@@ -18,21 +16,22 @@ TOKEN_FILE = "token.json"
 
 class GoogleDriveClient:
     def __init__(self):
-        # Write token.json from env var if file doesn't exist (Railway deployment)
-        if not os.path.exists(TOKEN_FILE):
-            token_b64 = os.environ.get("GOOGLE_TOKEN_JSON_B64")
-            if token_b64:
-                with open(TOKEN_FILE, "w") as f:
-                    f.write(base64.b64decode(token_b64).decode("utf-8"))
-            else:
-                raise RuntimeError("No token.json and GOOGLE_TOKEN_JSON_B64 not set")
+        if os.path.exists(TOKEN_FILE):
+            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+        else:
+            # Build credentials from individual env vars (Railway deployment)
+            creds = Credentials(
+                token=None,
+                refresh_token=os.environ["GOOGLE_REFRESH_TOKEN"],
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=os.environ["GOOGLE_CLIENT_ID"],
+                client_secret=os.environ["GOOGLE_CLIENT_SECRET"],
+                scopes=SCOPES,
+            )
 
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-        # Auto-refresh if expired
-        if creds.expired and creds.refresh_token:
+        if creds.expired or not creds.valid:
             creds.refresh(Request())
-            with open(TOKEN_FILE, "w") as f:
-                f.write(creds.to_json())
+
         self.service = build("drive", "v3", credentials=creds)
 
     # ──────────────────────────────────────────
