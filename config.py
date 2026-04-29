@@ -38,40 +38,11 @@ TELEGRAM_ROUTING = [
     {
         "name": "VA 6",
         "chat_id": "8371406259",
-        "rule": "always",          # receives every upload
-    },
-    {
-        "name": "VA 2",
-        "chat_id": "1289565858",
-        # Customs, Half AI Content → all models
-        # Feed Content, PPV Content → only Sherry Hicks
-        "rule": "custom",
-        "content_types_all_models": ["Customs", "Half AI Content"],
-        "content_types_sherry_only": ["Feed Content", "PPV Content"],
-    },
-    {
-        "name": "VA 3",
-        "chat_id": "7931507598",
-        # Instagram Reels → only Sherry Hicks
-        # Full AI Content → all models
-        "rule": "custom",
-        "content_types_all_models": ["Full AI Content"],
-        "content_types_sherry_only": ["Instagram Reels"],
-    },
-    {
-        "name": "VA 4",
-        "chat_id": "5905688359",
-        # Instagram Reels → only Sherry Hicks
-        "rule": "custom",
-        "content_types_all_models": [],
-        "content_types_sherry_only": ["Instagram Reels"],
+        "rule": "always",
     },
     {
         "name": "VA 5",
         "chat_id": "8013986821",
-        # Full AI Content + Half AI Content → all models
-        "rule": "custom",
-        "content_types_all_models": ["Full AI Content", "Half AI Content"],
-        "content_types_sherry_only": [],
+        "rule": "always",
     },
 ]
