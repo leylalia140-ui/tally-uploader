@@ -44,6 +44,8 @@ TELEGRAM_ROUTING = [
     {
         "name": "VA 5",
         "chat_id": "8013986821",
-        "rule": "always",
+        "rule": "custom",
+        "content_types_all_models": [],
+        "content_types_margaret_only": ["Full AI Content"],
     },
 ]

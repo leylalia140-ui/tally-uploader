@@ -27,6 +27,13 @@ def _should_notify(va: dict, model_name: str, content_type: str) -> bool:
     ):
         return True
 
+    # content_types_margaret_only → only Margaret Asian
+    if (
+        content_type in va.get("content_types_margaret_only", [])
+        and model_name == "Margaret Asian"
+    ):
+        return True
+
     return False
 
 
