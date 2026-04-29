@@ -84,11 +84,10 @@ def extract_uploads(payload: dict) -> list[dict]:
         label = f.get("label", "")
         ftype = f.get("type", "")
 
-        if label == "Was ist dein Creator Name":
-            model_name = (f.get("value") or "").strip()
+        if label in ("Was ist dein Creator Name", "For Which Model are you uploading Content?"):
+            model_name = _resolve_dropdown(f) or (f.get("value") or "").strip()
 
-        elif label == "Was für eine Art von Content lädst du hoch?":
-            # This is the Drive folder content type (Instagram Reels, PPV etc.)
+        elif label in ("Was für eine Art von Content lädst du hoch?", "What kind of Content?"):
             content_type = _resolve_dropdown(f) or ""
 
         elif ftype == "FILE_UPLOAD":
