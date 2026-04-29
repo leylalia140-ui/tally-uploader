@@ -5,7 +5,7 @@ class Settings:
     GOOGLE_DRIVE_ROOT_FOLDER_ID: str = os.environ.get(
         "GOOGLE_DRIVE_ROOT_FOLDER_ID", "1ofu3b6xK4Hdnk0n_vGD-y9cQNSg7lY2U"
     )
-    TELEGRAM_BOT_TOKEN: str = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    TELEGRAM_BOT_TOKEN: str = os.environ.get("TG_TOKEN", os.environ.get("TELEGRAM_BOT_TOKEN", ""))
     TALLY_SIGNING_SECRET: str | None = os.environ.get("TALLY_SIGNING_SECRET")
     PORT: int = int(os.environ.get("PORT", "8000"))
     HOST: str = os.environ.get("HOST", "0.0.0.0")
