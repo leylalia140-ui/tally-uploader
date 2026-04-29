@@ -120,7 +120,7 @@ async def process_all_uploads(uploads: list[dict]) -> None:
     model_name = uploads[0].get("model", "").strip()
     content_type = uploads[0].get("content_type", "").strip()
     date_str = format_date(datetime.now(BERLIN))
-    folder_path = ["Models", model_name, content_type, "not edited", date_str]
+    folder_path = ["Models", model_name, content_type, "edited", date_str]
 
     drive = GoogleDriveClient()
     folder_id = drive.resolve_folder_path(folder_path)

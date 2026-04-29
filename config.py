@@ -22,6 +22,7 @@ MODELS = [
     "Rose Kenzie",
     "Noura Amaar",
     "Sherry Hicks Shell",
+    "Margaret Asian",
 ]
 
 # Content types available per model
