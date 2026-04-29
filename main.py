@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Tally → Drive → Telegram")
 
 
+@app.on_event("startup")
+async def startup_event():
+    token = settings.TELEGRAM_BOT_TOKEN
+    logger.info(f"TELEGRAM_BOT_TOKEN: {'SET (' + token[:10] + '...)' if token else 'EMPTY!'}")
+
+
 # ──────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────

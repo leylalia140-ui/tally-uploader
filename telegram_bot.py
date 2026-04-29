@@ -4,9 +4,11 @@ from config import settings, TELEGRAM_ROUTING
 
 logger = logging.getLogger(__name__)
 
-TELEGRAM_API = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
-
 SHERRY_HICKS_VARIANTS = {"Sherry Hicks", "Sherry Hicks Shell"}
+
+
+def _telegram_api() -> str:
+    return f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
 
 
 def _should_notify(va: dict, model_name: str, content_type: str) -> bool:
@@ -55,7 +57,7 @@ async def send_error_notification(detail: str) -> None:
     async with httpx.AsyncClient(timeout=15) as client:
         try:
             await client.post(
-                f"{TELEGRAM_API}/sendMessage",
+                f"{_telegram_api()}/sendMessage",
                 json={"chat_id": VA6_CHAT_ID, "text": message},
             )
         except Exception as e:
@@ -77,7 +79,7 @@ async def send_notifications(
 
             try:
                 resp = await client.post(
-                    f"{TELEGRAM_API}/sendMessage",
+                    f"{_telegram_api()}/sendMessage",
                     json={
                         "chat_id": va["chat_id"],
                         "text": message,
