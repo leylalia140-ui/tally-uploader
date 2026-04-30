@@ -193,6 +193,10 @@ async def process_all_uploads(uploads: list[dict]) -> None:
         buffer, file_name = convert_to_h264(buffer, file_name)
         mime_type = "video/mp4"
 
+        buffer.seek(0)
+        video_data = buffer.read()
+
+        buffer.seek(0)
         drive.upload_file(
             file_name=file_name,
             file_stream=buffer,
@@ -200,6 +204,13 @@ async def process_all_uploads(uploads: list[dict]) -> None:
             mime_type=mime_type,
         )
         logger.info(f"Done: {file_name}")
+
+        await telegram_bot.send_video_to_chats(
+            model_name=model_name,
+            content_type=content_type,
+            file_name=file_name,
+            video_data=video_data,
+        )
 
     folder_link = drive.make_folder_public(folder_id)
     logger.info(f"Folder link: {folder_link}")

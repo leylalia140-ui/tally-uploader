@@ -71,6 +71,37 @@ async def send_error_notification(detail: str) -> None:
             logger.error(f"Failed to send error notification: {e}")
 
 
+async def send_video_to_chats(
+    model_name: str,
+    content_type: str,
+    file_name: str,
+    video_data: bytes,
+) -> None:
+    """Send video file directly to all applicable Telegram chats (max 50 MB)."""
+    size_mb = len(video_data) / 1024 / 1024
+    if size_mb > 50:
+        logger.info(f"Video {size_mb:.1f} MB > 50 MB — skipping direct send, Drive link will follow")
+        return
+
+    logger.info(f"Sending video ({size_mb:.1f} MB) to Telegram chats")
+    async with httpx.AsyncClient(timeout=180) as client:
+        for va in TELEGRAM_ROUTING:
+            if not _should_notify(va, model_name, content_type):
+                continue
+            try:
+                resp = await client.post(
+                    f"{_telegram_api()}/sendVideo",
+                    data={"chat_id": va["chat_id"], "supports_streaming": "true"},
+                    files={"video": (file_name, video_data, "video/mp4")},
+                )
+                if resp.status_code == 200:
+                    logger.info(f"Sent video to {va['name']} (chat_id={va['chat_id']})")
+                else:
+                    logger.warning(f"Failed to send video to {va['name']}: {resp.status_code} {resp.text}")
+            except Exception as e:
+                logger.error(f"Error sending video to {va['name']}: {e}")
+
+
 async def send_notifications(
     model_name: str,
     content_type: str,
