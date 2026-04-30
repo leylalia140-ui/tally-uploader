@@ -101,7 +101,7 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
                 f"→ Thread {target['thread_id']}"
             )
             resp = await client.post(
-                f"{_telegram_api()}/sendVideo",
+                f"{_telegram_api()}/sendDocument",
                 data={
                     "chat_id": APPROVAL_CHAT_ID,
                     "caption": caption,
@@ -110,7 +110,7 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
                         {"text": "❌ Reject",  "callback_data": f"reject:{token}"},
                     ]]}),
                 },
-                files={"video": (video["file_name"], video["data"], "video/mp4")},
+                files={"document": (video["file_name"], video["data"], "video/mp4")},
             )
             if resp.status_code == 200:
                 logger.info(f"Sent for approval: {video['file_name']}")
