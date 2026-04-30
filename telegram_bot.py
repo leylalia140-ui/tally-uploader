@@ -95,13 +95,12 @@ async def distribute_videos(videos: list[dict]) -> None:
 
             try:
                 resp = await client.post(
-                    f"{_telegram_api()}/sendVideo",
+                    f"{_telegram_api()}/sendDocument",
                     data={
                         "chat_id": target["chat_id"],
                         "message_thread_id": target["thread_id"],
-                        "supports_streaming": "true",
                     },
-                    files={"video": (video["file_name"], video["data"], "video/mp4")},
+                    files={"document": (video["file_name"], video["data"], "video/mp4")},
                 )
                 if resp.status_code == 200:
                     logger.info(f"Sent {video['file_name']} → thread {target['thread_id']}")
