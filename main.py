@@ -169,6 +169,8 @@ async def process_all_uploads(uploads: list[dict]) -> None:
     drive = GoogleDriveClient()
     folder_id = drive.resolve_folder_path(folder_path)
 
+    converted_videos = []
+
     for upload in uploads:
         file_url = upload.get("file_url")
         file_name = upload.get("file_name", "video.mp4")
@@ -195,6 +197,7 @@ async def process_all_uploads(uploads: list[dict]) -> None:
 
         buffer.seek(0)
         video_data = buffer.read()
+        converted_videos.append({"file_name": file_name, "data": video_data})
 
         buffer.seek(0)
         drive.upload_file(
@@ -203,17 +206,13 @@ async def process_all_uploads(uploads: list[dict]) -> None:
             folder_id=folder_id,
             mime_type=mime_type,
         )
-        logger.info(f"Done: {file_name}")
-
-        await telegram_bot.send_video_to_chats(
-            model_name=model_name,
-            content_type=content_type,
-            file_name=file_name,
-            video_data=video_data,
-        )
+        logger.info(f"Uploaded to Drive: {file_name}")
 
     folder_link = drive.make_folder_public(folder_id)
     logger.info(f"Folder link: {folder_link}")
+
+    await telegram_bot.distribute_videos(converted_videos)
+
     await telegram_bot.send_notifications(
         model_name=model_name,
         content_type=content_type,

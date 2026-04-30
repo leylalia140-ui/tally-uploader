@@ -35,6 +35,15 @@ MODEL_CONTENT_RESTRICTIONS = {
 # Telegram Routing Rules
 # Each VA receives a notification based on model + content type
 # ──────────────────────────────────────────────
+# ──────────────────────────────────────────────
+# Video distribution targets (separate from notifications)
+# Videos are distributed round-robin across these topics
+# ──────────────────────────────────────────────
+VIDEO_DISTRIBUTION_TARGETS = [
+    {"chat_id": "-1003604359153", "thread_id": 371},
+    {"chat_id": "-1003604359153", "thread_id": 372},
+]
+
 TELEGRAM_ROUTING = [
     {
         "name": "VA 6",
