@@ -31,6 +31,13 @@ app = FastAPI(title="Tally → Drive → Telegram")
 async def startup_event():
     token = settings.TELEGRAM_BOT_TOKEN
     logger.info(f"TELEGRAM_BOT_TOKEN: {'SET (' + token[:10] + '...)' if token else 'EMPTY!'}")
+    webhook_url = "https://tally-uploader-production.up.railway.app/bot"
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.post(
+            f"https://api.telegram.org/bot{token}/setWebhook",
+            json={"url": webhook_url, "allowed_updates": ["callback_query"]},
+        )
+        logger.info(f"Webhook set: {r.json().get('description', r.text)}")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -211,7 +218,7 @@ async def process_all_uploads(uploads: list[dict]) -> None:
     folder_link = drive.make_folder_public(folder_id)
     logger.info(f"Folder link: {folder_link}")
 
-    await telegram_bot.distribute_videos(converted_videos)
+    await telegram_bot.send_for_approval(converted_videos, model_name, content_type)
 
     await telegram_bot.send_notifications(
         model_name=model_name,
@@ -256,6 +263,20 @@ async def tally_webhook(
 
     # Return 200 immediately so Tally doesn't retry
     return {"status": "accepted"}
+
+
+@app.post("/bot")
+async def telegram_callback(request: Request):
+    data = await request.json()
+    if "callback_query" in data:
+        cq = data["callback_query"]
+        await telegram_bot.handle_callback(cq)
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(
+                f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/answerCallbackQuery",
+                json={"callback_query_id": cq["id"]},
+            )
+    return {"ok": True}
 
 
 @app.get("/health")
