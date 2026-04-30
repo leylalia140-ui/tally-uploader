@@ -80,42 +80,63 @@ async def send_error_notification(detail: str) -> None:
 
 
 async def send_for_approval(videos: list[dict], model_name: str, content_type: str) -> None:
-    """Send each video to approval group with ✅/❌ buttons."""
+    """Send each video to approval group as .mp4 file + separate buttons message."""
     targets = VIDEO_DISTRIBUTION_TARGETS
     half = len(videos) // 2 or 1
 
-    async with httpx.AsyncClient(timeout=180) as client:
-        for i, video in enumerate(videos):
-            token = secrets.token_urlsafe(16)
-            target = targets[0] if i < half else targets[1]
-            PENDING_APPROVALS[token] = {
-                "video_data": video["data"],
-                "file_name": video["file_name"],
-                "target": target,
-                "model_name": model_name,
-                "content_type": content_type,
-            }
-            caption = (
-                f"🎬 {model_name} — {content_type}\n"
-                f"📁 {video['file_name']}\n"
-                f"→ Thread {target['thread_id']}"
-            )
-            resp = await client.post(
-                f"{_telegram_api()}/sendDocument",
-                data={
-                    "chat_id": APPROVAL_CHAT_ID,
-                    "caption": caption,
-                    "reply_markup": json.dumps({"inline_keyboard": [[
-                        {"text": "✅ Approve", "callback_data": f"approve:{token}"},
-                        {"text": "❌ Reject",  "callback_data": f"reject:{token}"},
-                    ]]}),
-                },
-                files={"document": (video["file_name"], video["data"], "video/mp4")},
-            )
-            if resp.status_code == 200:
-                logger.info(f"Sent for approval: {video['file_name']}")
-            else:
-                logger.warning(f"Approval send failed: {resp.text}")
+    session_string = os.environ.get("TG_SESSION", "")
+    api_id = int(os.environ.get("TG_API_ID", 0))
+    api_hash = os.environ.get("TG_API_HASH", "")
+
+    async with Client("uploader", api_id=api_id, api_hash=api_hash, session_string=session_string) as app:
+        async with httpx.AsyncClient(timeout=180) as client:
+            for i, video in enumerate(videos):
+                token = secrets.token_urlsafe(16)
+                target = targets[0] if i < half else targets[1]
+                PENDING_APPROVALS[token] = {
+                    "video_data": video["data"],
+                    "file_name": video["file_name"],
+                    "target": target,
+                    "model_name": model_name,
+                    "content_type": content_type,
+                }
+
+                # 1. Send file as .mp4 document via Hydrogram
+                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+                    tmp.write(video["data"])
+                    tmp_path = tmp.name
+                try:
+                    await app.send_document(
+                        chat_id=APPROVAL_CHAT_ID,
+                        document=tmp_path,
+                        file_name=video["file_name"],
+                        force_document=True,
+                    )
+                    logger.info(f"Sent file for approval: {video['file_name']}")
+                except Exception as e:
+                    logger.error(f"Error sending approval file: {e}")
+                finally:
+                    os.unlink(tmp_path)
+
+                # 2. Send buttons message via Bot API
+                caption = (
+                    f"🎬 {model_name} — {content_type}\n"
+                    f"📁 {video['file_name']}\n"
+                    f"→ Thread {target['thread_id']}"
+                )
+                resp = await client.post(
+                    f"{_telegram_api()}/sendMessage",
+                    json={
+                        "chat_id": APPROVAL_CHAT_ID,
+                        "text": caption,
+                        "reply_markup": {"inline_keyboard": [[
+                            {"text": "✅ Approve", "callback_data": f"approve:{token}"},
+                            {"text": "❌ Reject",  "callback_data": f"reject:{token}"},
+                        ]]},
+                    },
+                )
+                if resp.status_code != 200:
+                    logger.warning(f"Buttons send failed: {resp.text}")
 
 
 async def handle_callback(cq: dict) -> None:
@@ -149,8 +170,8 @@ async def handle_callback(cq: dict) -> None:
 async def _edit_caption(chat_id: int, message_id: int, text: str) -> None:
     async with httpx.AsyncClient(timeout=10) as client:
         await client.post(
-            f"{_telegram_api()}/editMessageCaption",
-            json={"chat_id": chat_id, "message_id": message_id, "caption": text},
+            f"{_telegram_api()}/editMessageText",
+            json={"chat_id": chat_id, "message_id": message_id, "text": text},
         )
 
 

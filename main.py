@@ -146,7 +146,8 @@ def convert_to_h264(buffer: io.BytesIO, original_name: str) -> tuple[io.BytesIO,
         if result.returncode != 0:
             logger.error(f"ffmpeg error: {result.stderr.decode()[-500:]}")
             buffer.seek(0)
-            return buffer, original_name
+            fallback_name = os.path.splitext(original_name)[0] + ".mp4"
+            return buffer, fallback_name
 
         with open(tmp_out_path, "rb") as f:
             out_buffer = io.BytesIO(f.read())
