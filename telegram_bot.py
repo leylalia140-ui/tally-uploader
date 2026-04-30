@@ -82,9 +82,11 @@ async def distribute_videos(videos: list[dict]) -> None:
     targets = VIDEO_DISTRIBUTION_TARGETS
     logger.info(f"Distributing {len(videos)} video(s) across {len(targets)} targets")
 
+    half = len(videos) // 2 or 1
+
     async with httpx.AsyncClient(timeout=180) as client:
         for i, video in enumerate(videos):
-            target = targets[i % len(targets)]
+            target = targets[0] if i < half else targets[1]
             size_mb = len(video["data"]) / 1024 / 1024
 
             if size_mb > 50:
