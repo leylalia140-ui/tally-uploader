@@ -2,7 +2,7 @@ import logging
 import os
 import tempfile
 import httpx
-from pyrogram import Client
+from hydrogram import Client
 from config import settings, TELEGRAM_ROUTING, VIDEO_DISTRIBUTION_TARGETS
 
 logger = logging.getLogger(__name__)
