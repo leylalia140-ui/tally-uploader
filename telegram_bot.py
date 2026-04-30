@@ -93,6 +93,8 @@ async def distribute_videos(videos: list[dict]) -> None:
                 logger.warning(f"{video['file_name']} is {size_mb:.1f} MB > 50 MB — skipping")
                 continue
 
+            # Telegram auto-converts .mp4 to video — send as .bin to force file mode
+            tg_filename = video["file_name"].rsplit(".", 1)[0] + ".bin"
             try:
                 resp = await client.post(
                     f"{_telegram_api()}/sendDocument",
@@ -100,7 +102,7 @@ async def distribute_videos(videos: list[dict]) -> None:
                         "chat_id": target["chat_id"],
                         "message_thread_id": target["thread_id"],
                     },
-                    files={"document": (video["file_name"], video["data"], "application/octet-stream")},
+                    files={"document": (tg_filename, video["data"], "application/octet-stream")},
                 )
                 if resp.status_code == 200:
                     logger.info(f"Sent {video['file_name']} → thread {target['thread_id']}")
