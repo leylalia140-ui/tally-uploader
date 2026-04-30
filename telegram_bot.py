@@ -1,5 +1,8 @@
 import logging
+import os
+import tempfile
 import httpx
+from pyrogram import Client
 from config import settings, TELEGRAM_ROUTING, VIDEO_DISTRIBUTION_TARGETS
 
 logger = logging.getLogger(__name__)
@@ -73,43 +76,46 @@ async def send_error_notification(detail: str) -> None:
 
 async def distribute_videos(videos: list[dict]) -> None:
     """
-    Distribute converted videos round-robin across VIDEO_DISTRIBUTION_TARGETS.
-    videos = [{"file_name": "...", "data": b"..."}]
+    Distribute converted videos across VIDEO_DISTRIBUTION_TARGETS via Pyrogram.
+    First half → target[0], second half → target[1].
+    Uses MTProto (force_document=True) so MP4 arrives as file, not video.
     """
     if not videos:
         return
 
-    targets = VIDEO_DISTRIBUTION_TARGETS
-    logger.info(f"Distributing {len(videos)} video(s) across {len(targets)} targets")
+    session_string = os.environ.get("TG_SESSION", "")
+    if not session_string:
+        logger.error("TG_SESSION not set — skipping video distribution")
+        return
 
+    api_id = int(os.environ.get("TG_API_ID", 0))
+    api_hash = os.environ.get("TG_API_HASH", "")
+    targets = VIDEO_DISTRIBUTION_TARGETS
     half = len(videos) // 2 or 1
 
-    async with httpx.AsyncClient(timeout=180) as client:
+    logger.info(f"Distributing {len(videos)} video(s) across {len(targets)} targets via Pyrogram")
+
+    async with Client("uploader", api_id=api_id, api_hash=api_hash, session_string=session_string) as app:
         for i, video in enumerate(videos):
             target = targets[0] if i < half else targets[1]
-            size_mb = len(video["data"]) / 1024 / 1024
 
-            if size_mb > 50:
-                logger.warning(f"{video['file_name']} is {size_mb:.1f} MB > 50 MB — skipping")
-                continue
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+                tmp.write(video["data"])
+                tmp_path = tmp.name
 
-            # Telegram auto-converts .mp4 to video — send as .bin to force file mode
-            tg_filename = video["file_name"].rsplit(".", 1)[0] + ".bin"
             try:
-                resp = await client.post(
-                    f"{_telegram_api()}/sendDocument",
-                    data={
-                        "chat_id": target["chat_id"],
-                        "message_thread_id": target["thread_id"],
-                    },
-                    files={"document": (tg_filename, video["data"], "application/octet-stream")},
+                await app.send_document(
+                    chat_id=int(target["chat_id"]),
+                    document=tmp_path,
+                    file_name=video["file_name"],
+                    message_thread_id=target["thread_id"],
+                    force_document=True,
                 )
-                if resp.status_code == 200:
-                    logger.info(f"Sent {video['file_name']} → thread {target['thread_id']}")
-                else:
-                    logger.warning(f"Failed ({resp.status_code}): {resp.text}")
+                logger.info(f"Sent {video['file_name']} → thread {target['thread_id']}")
             except Exception as e:
                 logger.error(f"Error sending {video['file_name']}: {e}")
+            finally:
+                os.unlink(tmp_path)
 
 
 async def send_notifications(
