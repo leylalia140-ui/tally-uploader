@@ -100,7 +100,7 @@ async def distribute_videos(videos: list[dict]) -> None:
                         "chat_id": target["chat_id"],
                         "message_thread_id": target["thread_id"],
                     },
-                    files={"document": (video["file_name"], video["data"], "video/mp4")},
+                    files={"document": (video["file_name"], video["data"], "application/octet-stream")},
                 )
                 if resp.status_code == 200:
                     logger.info(f"Sent {video['file_name']} → thread {target['thread_id']}")
