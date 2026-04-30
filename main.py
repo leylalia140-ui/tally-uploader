@@ -2,6 +2,9 @@ import io
 import hashlib
 import hmac
 import logging
+import os
+import subprocess
+import tempfile
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -110,6 +113,47 @@ def extract_uploads(payload: dict) -> list[dict]:
 
 
 # ──────────────────────────────────────────────────────────────
+# Video conversion
+# ──────────────────────────────────────────────────────────────
+
+def convert_to_h264(buffer: io.BytesIO, original_name: str) -> tuple[io.BytesIO, str]:
+    """Convert any video to H.264/MP4 via ffmpeg. Falls back to original on error."""
+    ext_in = os.path.splitext(original_name)[1] or ".mov"
+    with tempfile.NamedTemporaryFile(suffix=ext_in, delete=False) as tmp_in:
+        tmp_in.write(buffer.read())
+        tmp_in_path = tmp_in.name
+
+    tmp_out_path = tmp_in_path + "_h264.mp4"
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", tmp_in_path,
+                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart",
+                tmp_out_path,
+            ],
+            capture_output=True,
+            timeout=600,
+        )
+        if result.returncode != 0:
+            logger.error(f"ffmpeg error: {result.stderr.decode()[-500:]}")
+            buffer.seek(0)
+            return buffer, original_name
+
+        with open(tmp_out_path, "rb") as f:
+            out_buffer = io.BytesIO(f.read())
+
+        new_name = os.path.splitext(original_name)[0] + ".mp4"
+        logger.info(f"Converted to H.264: {new_name} ({out_buffer.getbuffer().nbytes / 1024 / 1024:.1f} MB)")
+        return out_buffer, new_name
+    finally:
+        os.unlink(tmp_in_path)
+        if os.path.exists(tmp_out_path):
+            os.unlink(tmp_out_path)
+
+
+# ──────────────────────────────────────────────────────────────
 # Background task
 # ──────────────────────────────────────────────────────────────
 
@@ -145,6 +189,9 @@ async def process_all_uploads(uploads: list[dict]) -> None:
                     buffer.write(chunk)
         buffer.seek(0)
         logger.info(f"Downloaded {buffer.getbuffer().nbytes / 1024 / 1024:.1f} MB")
+
+        buffer, file_name = convert_to_h264(buffer, file_name)
+        mime_type = "video/mp4"
 
         drive.upload_file(
             file_name=file_name,
