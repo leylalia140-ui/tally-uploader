@@ -135,6 +135,7 @@ def convert_to_h264(buffer: io.BytesIO, original_name: str) -> tuple[io.BytesIO,
         result = subprocess.run(
             [
                 "ffmpeg", "-y", "-i", tmp_in_path,
+                "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "18",
                 "-c:a", "aac", "-b:a", "192k",
                 "-movflags", "+faststart",
@@ -219,7 +220,8 @@ async def process_all_uploads(uploads: list[dict]) -> None:
     folder_link = drive.make_folder_public(folder_id)
     logger.info(f"Folder link: {folder_link}")
 
-    await telegram_bot.send_for_approval(converted_videos, model_name, content_type)
+    if model_name == "Margaret Asian":
+        await telegram_bot.send_for_approval(converted_videos, model_name, content_type)
 
     await telegram_bot.send_notifications(
         model_name=model_name,
