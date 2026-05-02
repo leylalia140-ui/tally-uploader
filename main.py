@@ -135,8 +135,9 @@ def convert_to_h264(buffer: io.BytesIO, original_name: str) -> tuple[io.BytesIO,
         result = subprocess.run(
             [
                 "ffmpeg", "-y", "-i", tmp_in_path,
-                "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
+                "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                "-pix_fmt", "yuv420p",
                 "-c:a", "aac", "-b:a", "192k",
                 "-movflags", "+faststart",
                 tmp_out_path,
@@ -145,7 +146,7 @@ def convert_to_h264(buffer: io.BytesIO, original_name: str) -> tuple[io.BytesIO,
             timeout=600,
         )
         if result.returncode != 0:
-            logger.error(f"ffmpeg error: {result.stderr.decode()[-500:]}")
+            logger.error(f"ffmpeg FAILED (code {result.returncode}): {result.stderr.decode()[-1000:]}")
             buffer.seek(0)
             fallback_name = os.path.splitext(original_name)[0] + ".mp4"
             return buffer, fallback_name
