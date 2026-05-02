@@ -135,7 +135,7 @@ def convert_to_h264(buffer: io.BytesIO, original_name: str) -> tuple[io.BytesIO,
         result = subprocess.run(
             [
                 "ffmpeg", "-y", "-i", tmp_in_path,
-                "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1",
+                "-vf", "scale=1074:1920,setsar=1",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "18",
                 "-pix_fmt", "yuv420p",
                 "-c:a", "aac", "-b:a", "192k",
