@@ -187,7 +187,7 @@ async def process_all_uploads(uploads: list[dict]) -> None:
     model_name = uploads[0].get("model", "").strip()
     content_type = uploads[0].get("content_type", "").strip()
     date_str = format_date(datetime.now(BERLIN))
-    folder_subfolder = "not edited" if model_name == "Sherry Hicks" else "edited"
+    folder_subfolder = "not edited" if model_name in ("Sherry Hicks", "Margaret Asian") else "edited"
     folder_path = ["Models", model_name, content_type, folder_subfolder, date_str]
 
     drive = GoogleDriveClient()
