@@ -84,7 +84,9 @@ def extract_uploads(payload: dict) -> list[dict]:
       [{ "model": "Sherry Hicks", "content_type": "Instagram Reels",
          "file_url": "...", "file_name": "...", "mime_type": "..." }, ...]
     """
-    fields_raw = payload.get("data", {}).get("fields", [])
+    data = payload.get("data", {})
+    fields_raw = data.get("fields", [])
+    form_id = data.get("formId", "")
 
     model_name = ""
     content_type = ""
@@ -111,6 +113,7 @@ def extract_uploads(payload: dict) -> list[dict]:
         {
             "model": model_name,
             "content_type": content_type,
+            "form_id": form_id,
             "file_url": fo.get("url"),
             "file_name": fo.get("name", "upload.mp4"),
             "mime_type": fo.get("mimeType", "video/mp4"),
@@ -187,7 +190,16 @@ async def process_all_uploads(uploads: list[dict]) -> None:
     model_name = uploads[0].get("model", "").strip()
     content_type = uploads[0].get("content_type", "").strip()
     date_str = format_date(datetime.now(BERLIN))
-    folder_subfolder = "not edited" if model_name in ("Sherry Hicks", "Margaret Asian") else "edited"
+    form_id = uploads[0].get("form_id", "")
+    content_lower = content_type.lower()
+    if form_id == "wAq9ql":
+        folder_subfolder = "edited"
+    elif model_name == "Sherry Hicks":
+        folder_subfolder = "not edited"
+    elif model_name == "Margaret Asian" and form_id == "mVMbpj" and any(k in content_lower for k in ("ppv", "feed")):
+        folder_subfolder = "not edited"
+    else:
+        folder_subfolder = "edited"
     folder_path = ["Models", model_name, content_type, folder_subfolder, date_str]
 
     drive = GoogleDriveClient()
