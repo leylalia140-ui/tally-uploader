@@ -120,6 +120,18 @@ def extract_uploads(payload: dict) -> list[dict]:
 
 
 # ──────────────────────────────────────────────────────────────
+# Helpers: file type detection
+# ──────────────────────────────────────────────────────────────
+
+_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp", "image/tiff"}
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff"}
+
+def is_image(file_name: str, mime_type: str) -> bool:
+    ext = os.path.splitext(file_name)[1].lower()
+    return mime_type.lower() in _IMAGE_MIME_TYPES or ext in _IMAGE_EXTENSIONS
+
+
+# ──────────────────────────────────────────────────────────────
 # Video conversion
 # ──────────────────────────────────────────────────────────────
 
@@ -175,7 +187,8 @@ async def process_all_uploads(uploads: list[dict]) -> None:
     model_name = uploads[0].get("model", "").strip()
     content_type = uploads[0].get("content_type", "").strip()
     date_str = format_date(datetime.now(BERLIN))
-    folder_path = ["Models", model_name, content_type, "edited", date_str]
+    folder_subfolder = "not edited" if model_name == "Sherry Hicks" else "edited"
+    folder_path = ["Models", model_name, content_type, folder_subfolder, date_str]
 
     drive = GoogleDriveClient()
     folder_id = drive.resolve_folder_path(folder_path)
@@ -203,8 +216,9 @@ async def process_all_uploads(uploads: list[dict]) -> None:
         buffer.seek(0)
         logger.info(f"Downloaded {buffer.getbuffer().nbytes / 1024 / 1024:.1f} MB")
 
-        buffer, file_name = convert_to_h264(buffer, file_name)
-        mime_type = "video/mp4"
+        if content_type == "Full AI Content" and not is_image(file_name, mime_type):
+            buffer, file_name = convert_to_h264(buffer, file_name)
+            mime_type = "video/mp4"
 
         buffer.seek(0)
         video_data = buffer.read()
