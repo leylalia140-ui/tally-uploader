@@ -191,72 +191,80 @@ async def process_all_uploads(uploads: list[dict]) -> None:
     content_type = uploads[0].get("content_type", "").strip()
     date_str = format_date(datetime.now(BERLIN))
     form_id = uploads[0].get("form_id", "")
-    content_lower = content_type.lower()
-    if form_id == "wAq9ql":
-        folder_subfolder = "edited"
-    elif model_name == "Sherry Hicks":
-        folder_subfolder = "not edited"
-    elif model_name == "Margaret Asian" and form_id == "mVMbpj" and any(k in content_lower for k in ("ppv", "feed")):
-        folder_subfolder = "not edited"
-    else:
-        folder_subfolder = "edited"
-    folder_path = ["Models", model_name, content_type, folder_subfolder, date_str]
 
-    drive = GoogleDriveClient()
-    folder_id = drive.resolve_folder_path(folder_path)
+    try:
+        content_lower = content_type.lower()
+        if form_id == "wAq9ql":
+            folder_subfolder = "edited"
+        elif model_name == "Sherry Hicks":
+            folder_subfolder = "not edited"
+        elif model_name == "Margaret Asian" and form_id == "mVMbpj" and any(k in content_lower for k in ("ppv", "feed")):
+            folder_subfolder = "not edited"
+        else:
+            folder_subfolder = "edited"
+        folder_path = ["Models", model_name, content_type, folder_subfolder, date_str]
 
-    converted_videos = []
+        drive = GoogleDriveClient()
+        folder_id = drive.resolve_folder_path(folder_path)
 
-    for upload in uploads:
-        file_url = upload.get("file_url")
-        file_name = upload.get("file_name", "video.mp4")
-        mime_type = upload.get("mime_type", "video/mp4")
+        converted_videos = []
 
-        if not file_url:
-            logger.error(f"Missing file_url: {upload}")
-            continue
+        for upload in uploads:
+            file_url = upload.get("file_url")
+            file_name = upload.get("file_name", "video.mp4")
+            mime_type = upload.get("mime_type", "video/mp4")
 
-        logger.info(f"Processing: {model_name} / {content_type} / {date_str} — {file_name}")
-        logger.info(f"Downloading: {file_url}")
+            if not file_url:
+                logger.error(f"Missing file_url: {upload}")
+                continue
 
-        async with httpx.AsyncClient(timeout=300, follow_redirects=True) as client:
-            async with client.stream("GET", file_url) as response:
-                response.raise_for_status()
-                buffer = io.BytesIO()
-                async for chunk in response.aiter_bytes(chunk_size=10 * 1024 * 1024):
-                    buffer.write(chunk)
-        buffer.seek(0)
-        logger.info(f"Downloaded {buffer.getbuffer().nbytes / 1024 / 1024:.1f} MB")
+            logger.info(f"Processing: {model_name} / {content_type} / {date_str} — {file_name}")
+            logger.info(f"Downloading: {file_url}")
 
-        if content_type == "Full AI Content" and not is_image(file_name, mime_type):
-            buffer, file_name = convert_to_h264(buffer, file_name)
-            mime_type = "video/mp4"
+            async with httpx.AsyncClient(timeout=300, follow_redirects=True) as client:
+                async with client.stream("GET", file_url) as response:
+                    response.raise_for_status()
+                    buffer = io.BytesIO()
+                    async for chunk in response.aiter_bytes(chunk_size=10 * 1024 * 1024):
+                        buffer.write(chunk)
+            buffer.seek(0)
+            logger.info(f"Downloaded {buffer.getbuffer().nbytes / 1024 / 1024:.1f} MB")
 
-        buffer.seek(0)
-        video_data = buffer.read()
-        converted_videos.append({"file_name": file_name, "data": video_data})
+            if content_type == "Full AI Content" and not is_image(file_name, mime_type):
+                buffer, file_name = convert_to_h264(buffer, file_name)
+                mime_type = "video/mp4"
 
-        buffer.seek(0)
-        drive.upload_file(
-            file_name=file_name,
-            file_stream=buffer,
-            folder_id=folder_id,
-            mime_type=mime_type,
+            buffer.seek(0)
+            video_data = buffer.read()
+            converted_videos.append({"file_name": file_name, "data": video_data})
+
+            buffer.seek(0)
+            drive.upload_file(
+                file_name=file_name,
+                file_stream=buffer,
+                folder_id=folder_id,
+                mime_type=mime_type,
+            )
+            logger.info(f"Uploaded to Drive: {file_name}")
+
+        folder_link = drive.make_folder_public(folder_id)
+        logger.info(f"Folder link: {folder_link}")
+
+        if model_name == "Margaret Asian":
+            await telegram_bot.send_for_approval(converted_videos, model_name, content_type)
+
+        await telegram_bot.send_notifications(
+            model_name=model_name,
+            content_type=content_type,
+            date_str=date_str,
+            drive_links=[folder_link],
         )
-        logger.info(f"Uploaded to Drive: {file_name}")
 
-    folder_link = drive.make_folder_public(folder_id)
-    logger.info(f"Folder link: {folder_link}")
-
-    if model_name == "Margaret Asian":
-        await telegram_bot.send_for_approval(converted_videos, model_name, content_type)
-
-    await telegram_bot.send_notifications(
-        model_name=model_name,
-        content_type=content_type,
-        date_str=date_str,
-        drive_links=[folder_link],
-    )
+    except Exception as e:
+        logger.error(f"FATAL error processing upload for {model_name}: {e}", exc_info=True)
+        await telegram_bot.send_error_notification(
+            f"Upload fehlgeschlagen für {model_name} / {content_type}: {type(e).__name__}: {e}"
+        )
 
 
 # ──────────────────────────────────────────────────────────────
