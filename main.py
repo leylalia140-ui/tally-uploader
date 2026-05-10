@@ -1,3 +1,4 @@
+import asyncio
 import io
 import hashlib
 import hmac
@@ -23,6 +24,9 @@ logging.basicConfig(
     format="%(asctime)s  %(levelname)-8s  %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# Limit concurrent processing to 1 — prevents OOM when multiple webhooks arrive simultaneously
+_process_semaphore = asyncio.Semaphore(1)
 
 app = FastAPI(title="Tally → Drive → Telegram")
 
@@ -187,6 +191,11 @@ async def process_all_uploads(uploads: list[dict]) -> None:
     if not uploads:
         return
 
+    async with _process_semaphore:
+        await _do_process_all_uploads(uploads)
+
+
+async def _do_process_all_uploads(uploads: list[dict]) -> None:
     model_name = uploads[0].get("model", "").strip()
     content_type = uploads[0].get("content_type", "").strip()
     date_str = format_date(datetime.now(BERLIN))
