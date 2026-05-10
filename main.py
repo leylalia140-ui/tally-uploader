@@ -233,7 +233,7 @@ async def _do_process_all_uploads(uploads: list[dict]) -> None:
             with tempfile.NamedTemporaryFile(suffix=ext_in, delete=False) as tmp_f:
                 tmp_path = tmp_f.name
                 size = 0
-                async with httpx.AsyncClient(timeout=300, follow_redirects=True) as client:
+                async with httpx.AsyncClient(timeout=900, follow_redirects=True) as client:
                     async with client.stream("GET", file_url) as response:
                         response.raise_for_status()
                         async for chunk in response.aiter_bytes(chunk_size=10 * 1024 * 1024):
