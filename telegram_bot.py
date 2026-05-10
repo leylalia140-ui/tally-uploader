@@ -2,13 +2,12 @@ import json
 import logging
 import os
 import secrets
-import tempfile
 import httpx
 from hydrogram import Client
 from config import settings, TELEGRAM_ROUTING, VIDEO_DISTRIBUTION_TARGETS
 
 APPROVAL_CHAT_ID = -5246342505
-PENDING_APPROVALS: dict = {}  # token → {video_data, file_name, target, model_name}
+PENDING_APPROVALS: dict = {}  # token → {file_path, file_name, target, model_name, content_type}
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +79,9 @@ async def send_error_notification(detail: str) -> None:
 
 
 async def send_for_approval(videos: list[dict], model_name: str, content_type: str) -> None:
-    """Send each video to approval group as .mp4 file + separate buttons message."""
+    """Send each video to approval group as .mp4 file + separate buttons message.
+    videos: list of {"file_name": str, "path": str} — paths to temp files on disk.
+    Files are kept alive in PENDING_APPROVALS and deleted after approve/reject."""
     targets = VIDEO_DISTRIBUTION_TARGETS
     half = len(videos) // 2 or 1
 
@@ -94,29 +95,24 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
                 token = secrets.token_urlsafe(16)
                 target = targets[0] if i < half else targets[1]
                 PENDING_APPROVALS[token] = {
-                    "video_data": video["data"],
+                    "file_path": video["path"],
                     "file_name": video["file_name"],
                     "target": target,
                     "model_name": model_name,
                     "content_type": content_type,
                 }
 
-                # 1. Send file as .mp4 document via Hydrogram
-                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-                    tmp.write(video["data"])
-                    tmp_path = tmp.name
+                # 1. Send file as .mp4 document via Hydrogram (directly from disk)
                 try:
                     await app.send_document(
                         chat_id=APPROVAL_CHAT_ID,
-                        document=tmp_path,
+                        document=video["path"],
                         file_name=video["file_name"],
                         force_document=True,
                     )
                     logger.info(f"Sent file for approval: {video['file_name']}")
                 except Exception as e:
                     logger.error(f"Error sending approval file: {e}")
-                finally:
-                    os.unlink(tmp_path)
 
                 # 2. Send buttons message via Bot API
                 caption = (
@@ -163,6 +159,9 @@ async def handle_callback(cq: dict) -> None:
         await _edit_caption(chat_id, message_id,
             f"✅ Gesendet → Thread {pending['target']['thread_id']}\n📁 {pending['file_name']}")
     elif action == "reject":
+        file_path = pending.get("file_path", "")
+        if file_path and os.path.exists(file_path):
+            os.unlink(file_path)
         await _edit_caption(chat_id, message_id,
             f"❌ Abgelehnt — {pending['file_name']}")
 
@@ -176,20 +175,18 @@ async def _edit_caption(chat_id: int, message_id: int, text: str) -> None:
 
 
 async def _send_approved_video(pending: dict) -> None:
-    """Send a single approved video as .mp4 document via Hydrogram."""
+    """Send a single approved video as .mp4 document via Hydrogram. Deletes the temp file after sending."""
     target = pending["target"]
+    file_path = pending["file_path"]
     session_string = os.environ.get("TG_SESSION", "")
     api_id = int(os.environ.get("TG_API_ID", 0))
     api_hash = os.environ.get("TG_API_HASH", "")
 
     async with Client("uploader", api_id=api_id, api_hash=api_hash, session_string=session_string) as app:
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-            tmp.write(pending["video_data"])
-            tmp_path = tmp.name
         try:
             await app.send_document(
                 chat_id=int(target["chat_id"]),
-                document=tmp_path,
+                document=file_path,
                 file_name=pending["file_name"],
                 message_thread_id=target["thread_id"],
                 force_document=True,
@@ -198,7 +195,8 @@ async def _send_approved_video(pending: dict) -> None:
         except Exception as e:
             logger.error(f"Error sending approved video: {e}")
         finally:
-            os.unlink(tmp_path)
+            if os.path.exists(file_path):
+                os.unlink(file_path)
 
 
 async def distribute_videos(videos: list[dict]) -> None:
@@ -225,15 +223,11 @@ async def distribute_videos(videos: list[dict]) -> None:
     async with Client("uploader", api_id=api_id, api_hash=api_hash, session_string=session_string) as app:
         for i, video in enumerate(videos):
             target = targets[0] if i < half else targets[1]
-
-            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-                tmp.write(video["data"])
-                tmp_path = tmp.name
-
+            file_path = video["path"]
             try:
                 await app.send_document(
                     chat_id=int(target["chat_id"]),
-                    document=tmp_path,
+                    document=file_path,
                     file_name=video["file_name"],
                     message_thread_id=target["thread_id"],
                     force_document=True,
@@ -242,7 +236,8 @@ async def distribute_videos(videos: list[dict]) -> None:
             except Exception as e:
                 logger.error(f"Error sending {video['file_name']}: {e}")
             finally:
-                os.unlink(tmp_path)
+                if os.path.exists(file_path):
+                    os.unlink(file_path)
 
 
 async def send_notifications(

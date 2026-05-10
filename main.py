@@ -1,5 +1,4 @@
 import asyncio
-import io
 import hashlib
 import hmac
 import logging
@@ -142,45 +141,43 @@ def is_image(file_name: str, mime_type: str) -> bool:
 # Video conversion
 # ──────────────────────────────────────────────────────────────
 
-def convert_to_h264(buffer: io.BytesIO, original_name: str) -> tuple[io.BytesIO, str]:
-    """Convert any video to H.264/MP4 via ffmpeg. Falls back to original on error."""
-    ext_in = os.path.splitext(original_name)[1] or ".mov"
-    with tempfile.NamedTemporaryFile(suffix=ext_in, delete=False) as tmp_in:
-        tmp_in.write(buffer.read())
-        tmp_in_path = tmp_in.name
-
-    tmp_out_path = tmp_in_path + "_h264.mp4"
+def convert_to_h264(in_path: str, original_name: str) -> tuple[str, str]:
+    """
+    Convert video at in_path to H.264/MP4 on disk. Deletes in_path when done.
+    Returns (out_path, new_name). Caller must delete out_path when finished.
+    """
+    out_path = in_path + "_h264.mp4"
+    new_name = os.path.splitext(original_name)[0] + ".mp4"
     try:
         result = subprocess.run(
             [
-                "ffmpeg", "-y", "-i", tmp_in_path,
+                "ffmpeg", "-y", "-i", in_path,
                 "-vf", "scale=1074:1920,setsar=1",
                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
                 "-pix_fmt", "yuv420p",
                 "-threads", "1",
                 "-c:a", "aac", "-b:a", "128k",
                 "-movflags", "+faststart",
-                tmp_out_path,
+                out_path,
             ],
             capture_output=True,
             timeout=600,
         )
         if result.returncode != 0:
             logger.error(f"ffmpeg FAILED (code {result.returncode}): {result.stderr.decode()[-1000:]}")
-            buffer.seek(0)
-            fallback_name = os.path.splitext(original_name)[0] + ".mp4"
-            return buffer, fallback_name
+            os.rename(in_path, out_path)  # fallback: use original as-is
+            return out_path, new_name
 
-        with open(tmp_out_path, "rb") as f:
-            out_buffer = io.BytesIO(f.read())
-
-        new_name = os.path.splitext(original_name)[0] + ".mp4"
-        logger.info(f"Converted to H.264: {new_name} ({out_buffer.getbuffer().nbytes / 1024 / 1024:.1f} MB)")
-        return out_buffer, new_name
+        size_mb = os.path.getsize(out_path) / 1024 / 1024
+        logger.info(f"Converted to H.264: {new_name} ({size_mb:.1f} MB)")
+        return out_path, new_name
+    except Exception as e:
+        logger.error(f"ffmpeg exception: {e}")
+        os.rename(in_path, out_path)
+        return out_path, new_name
     finally:
-        os.unlink(tmp_in_path)
-        if os.path.exists(tmp_out_path):
-            os.unlink(tmp_out_path)
+        if os.path.exists(in_path):
+            os.unlink(in_path)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -216,7 +213,8 @@ async def _do_process_all_uploads(uploads: list[dict]) -> None:
         drive = GoogleDriveClient()
         folder_id = drive.resolve_folder_path(folder_path)
 
-        converted_videos = []
+        # Videos for Margaret Asian approval (file paths, not bytes)
+        approval_videos = []
 
         for upload in uploads:
             file_url = upload.get("file_url")
@@ -230,37 +228,50 @@ async def _do_process_all_uploads(uploads: list[dict]) -> None:
             logger.info(f"Processing: {model_name} / {content_type} / {date_str} — {file_name}")
             logger.info(f"Downloading: {file_url}")
 
-            async with httpx.AsyncClient(timeout=300, follow_redirects=True) as client:
-                async with client.stream("GET", file_url) as response:
-                    response.raise_for_status()
-                    buffer = io.BytesIO()
-                    async for chunk in response.aiter_bytes(chunk_size=10 * 1024 * 1024):
-                        buffer.write(chunk)
-            buffer.seek(0)
-            logger.info(f"Downloaded {buffer.getbuffer().nbytes / 1024 / 1024:.1f} MB")
+            # Stream directly to a temp file — never load the full video into RAM
+            ext_in = os.path.splitext(file_name)[1] or ".mp4"
+            with tempfile.NamedTemporaryFile(suffix=ext_in, delete=False) as tmp_f:
+                tmp_path = tmp_f.name
+                size = 0
+                async with httpx.AsyncClient(timeout=300, follow_redirects=True) as client:
+                    async with client.stream("GET", file_url) as response:
+                        response.raise_for_status()
+                        async for chunk in response.aiter_bytes(chunk_size=10 * 1024 * 1024):
+                            tmp_f.write(chunk)
+                            size += len(chunk)
+            logger.info(f"Downloaded {size / 1024 / 1024:.1f} MB → {tmp_path}")
 
             if content_type == "Full AI Content" and not is_image(file_name, mime_type):
-                buffer, file_name = convert_to_h264(buffer, file_name)
+                # convert_to_h264 deletes tmp_path itself, returns new out_path
+                video_path, file_name = convert_to_h264(tmp_path, file_name)
                 mime_type = "video/mp4"
+            else:
+                video_path = tmp_path
 
-            buffer.seek(0)
-            video_data = buffer.read()
-            converted_videos.append({"file_name": file_name, "data": video_data})
+            try:
+                with open(video_path, "rb") as f:
+                    drive.upload_file(
+                        file_name=file_name,
+                        file_stream=f,
+                        folder_id=folder_id,
+                        mime_type=mime_type,
+                    )
+                logger.info(f"Uploaded to Drive: {file_name}")
+            except Exception:
+                os.unlink(video_path)
+                raise
 
-            buffer.seek(0)
-            drive.upload_file(
-                file_name=file_name,
-                file_stream=buffer,
-                folder_id=folder_id,
-                mime_type=mime_type,
-            )
-            logger.info(f"Uploaded to Drive: {file_name}")
+            if model_name == "Margaret Asian":
+                approval_videos.append({"file_name": file_name, "path": video_path})
+            else:
+                os.unlink(video_path)
 
         folder_link = drive.make_folder_public(folder_id)
         logger.info(f"Folder link: {folder_link}")
 
-        if model_name == "Margaret Asian":
-            await telegram_bot.send_for_approval(converted_videos, model_name, content_type)
+        if model_name == "Margaret Asian" and approval_videos:
+            await telegram_bot.send_for_approval(approval_videos, model_name, content_type)
+            # telegram_bot.py owns the files now and cleans them up after approve/reject
 
         await telegram_bot.send_notifications(
             model_name=model_name,
