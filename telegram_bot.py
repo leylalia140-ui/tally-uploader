@@ -255,7 +255,7 @@ async def _edit_caption(chat_id: int, message_id: int, text: str) -> None:
 async def _send_approved_video(pending: dict) -> None:
     """Send approved video to AI Models Reels topic (+ Behave x Amin for Margaret). Deletes temp file after."""
     file_path = pending["file_path"]
-    slots_caption = "📌 Posten auf: " + " | ".join(f"Slot {s}" for s in pending.get("slots", []))
+    slots_caption = "📌 Post on: " + " | ".join(f"Slot {s}" for s in pending.get("slots", []))
     session_string = os.environ.get("TG_SESSION", "")
     api_id = int(os.environ.get("TG_API_ID", 0))
     api_hash = os.environ.get("TG_API_HASH", "")
