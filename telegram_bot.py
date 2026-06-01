@@ -12,7 +12,7 @@ from config import (
 )
 
 BERLIN = ZoneInfo("Europe/Berlin")
-APPROVAL_CHAT_ID = -5246342505
+APPROVAL_CHAT_ID = -1004259848545
 PENDING_APPROVALS: dict = {}  # token → {file_path, file_name, model_name, content_type, slots, topic_id, behave_target}
 
 # ── Daily slot counters (reset each Berlin midnight) ──
