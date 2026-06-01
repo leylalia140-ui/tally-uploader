@@ -138,6 +138,10 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
     api_hash = os.environ.get("TG_API_HASH", "")
 
     async with Client("uploader", api_id=api_id, api_hash=api_hash, session_string=session_string) as app:
+        try:
+            await app.get_chat(APPROVAL_CHAT_ID)
+        except Exception as e:
+            logger.warning(f"get_chat pre-fetch: {e}")
         async with httpx.AsyncClient(timeout=180) as client:
             for i, video in enumerate(videos):
                 # Duplicate check
