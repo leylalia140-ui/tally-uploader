@@ -161,7 +161,7 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
                 # Calculate slots
                 video_index = _get_and_increment_counter(model_name)
                 slots = _get_slots(video_index)
-                slots_text = " | ".join(f"Slot {s}" for s in slots)
+                slots_text = " | ".join(f"Account {s}" for s in slots)
 
                 # For Margaret: also route to Behave x Amin
                 behave_target = None
@@ -230,7 +230,7 @@ async def handle_callback(cq: dict) -> None:
     pending = PENDING_APPROVALS.pop(token)
 
     if action == "approve":
-        slots_text = " | ".join(f"Slot {s}" for s in pending.get("slots", []))
+        slots_text = " | ".join(f"Account {s}" for s in pending.get("slots", []))
         await _edit_caption(chat_id, message_id,
             f"⏳ Wird gesendet → AI Models Reels ({pending['model_name']})…")
         await _send_approved_video(pending)
@@ -255,7 +255,10 @@ async def _edit_caption(chat_id: int, message_id: int, text: str) -> None:
 async def _send_approved_video(pending: dict) -> None:
     """Send approved video to AI Models Reels topic (+ Behave x Amin for Margaret). Deletes temp file after."""
     file_path = pending["file_path"]
-    slots_caption = "📌 Post on: " + " | ".join(f"Slot {s}" for s in pending.get("slots", []))
+    slots_caption = (
+        "📌 Post on: " + " | ".join(f"Account {s}" for s in pending.get("slots", [])) + "\n"
+        "⚠️ This video may only be posted on these 3 accounts — do not post it anywhere else!"
+    )
     session_string = os.environ.get("TG_SESSION", "")
     api_id = int(os.environ.get("TG_API_ID", 0))
     api_hash = os.environ.get("TG_API_HASH", "")
