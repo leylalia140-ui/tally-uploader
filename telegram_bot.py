@@ -189,6 +189,7 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
                         chat_id=APPROVAL_CHAT_ID,
                         document=video["path"],
                         file_name=video["file_name"],
+                        message_thread_id=topic_id,
                         force_document=True,
                     )
                     logger.info(f"Sent file for approval: {video['file_name']}")
@@ -205,6 +206,7 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
                     f"{_telegram_api()}/sendMessage",
                     json={
                         "chat_id": APPROVAL_CHAT_ID,
+                        "message_thread_id": topic_id,
                         "text": caption,
                         "reply_markup": {"inline_keyboard": [[
                             {"text": "✅ Approve", "callback_data": f"approve:{token}"},
