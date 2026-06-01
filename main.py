@@ -14,7 +14,7 @@ import httpx
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Header
 from typing import Optional
 
-from config import settings
+from config import settings, SLOT_CREATORS
 from drive import GoogleDriveClient
 import telegram_bot
 
@@ -261,7 +261,7 @@ async def _do_process_all_uploads(uploads: list[dict]) -> None:
                 os.unlink(video_path)
                 raise
 
-            if model_name == "Margaret Asian":
+            if model_name in SLOT_CREATORS:
                 approval_videos.append({"file_name": file_name, "path": video_path})
             else:
                 os.unlink(video_path)
@@ -269,7 +269,7 @@ async def _do_process_all_uploads(uploads: list[dict]) -> None:
         folder_link = drive.make_folder_public(folder_id)
         logger.info(f"Folder link: {folder_link}")
 
-        if model_name == "Margaret Asian" and approval_videos:
+        if model_name in SLOT_CREATORS and approval_videos:
             await telegram_bot.send_for_approval(approval_videos, model_name, content_type)
             # telegram_bot.py owns the files now and cleans them up after approve/reject
 

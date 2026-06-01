@@ -23,12 +23,27 @@ MODELS = [
     "Noura Amaar",
     "Sherry Hicks Shell",
     "Margaret Asian",
+    "Abby Parker",
+    "Yuki Chen",
 ]
 
 # Content types available per model
 # Sherry Hicks Shell only gets Full AI Content
 MODEL_CONTENT_RESTRICTIONS = {
     "Sherry Hicks Shell": ["Full AI Content"],
+}
+
+# ──────────────────────────────────────────────
+# Slot Distributor — AI Models Reels
+# ──────────────────────────────────────────────
+AI_MODELS_REELS_CHAT_ID = -1003965304219
+SLOTS_PER_CREATOR = 6  # accounts per creator
+
+# Creator → Topic-ID in "AI Models Reels" Forum-Supergroup
+SLOT_CREATORS = {
+    "Margaret Asian": 4,
+    "Abby Parker": 3,
+    "Yuki Chen": 2,
 }
 
 # ──────────────────────────────────────────────

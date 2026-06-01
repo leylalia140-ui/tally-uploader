@@ -1,13 +1,62 @@
-import json
+import hashlib
 import logging
 import os
 import secrets
 import httpx
+from datetime import date
+from zoneinfo import ZoneInfo
 from hydrogram import Client
-from config import settings, TELEGRAM_ROUTING, VIDEO_DISTRIBUTION_TARGETS
+from config import (
+    settings, TELEGRAM_ROUTING, VIDEO_DISTRIBUTION_TARGETS,
+    SLOT_CREATORS, AI_MODELS_REELS_CHAT_ID, SLOTS_PER_CREATOR,
+)
 
+BERLIN = ZoneInfo("Europe/Berlin")
 APPROVAL_CHAT_ID = -5246342505
-PENDING_APPROVALS: dict = {}  # token → {file_path, file_name, target, model_name, content_type}
+PENDING_APPROVALS: dict = {}  # token → {file_path, file_name, model_name, content_type, slots, topic_id, behave_target}
+
+# ── Daily slot counters (reset each Berlin midnight) ──
+_daily_counters: dict[str, dict] = {}  # creator → {"date": date, "count": int}
+_daily_hashes: dict[str, dict] = {}    # creator → {"date": date, "hashes": set}
+
+
+def _today() -> date:
+    from datetime import datetime
+    return datetime.now(BERLIN).date()
+
+
+def _get_and_increment_counter(creator: str) -> int:
+    today = _today()
+    if creator not in _daily_counters or _daily_counters[creator]["date"] != today:
+        _daily_counters[creator] = {"date": today, "count": 0}
+    idx = _daily_counters[creator]["count"]
+    _daily_counters[creator]["count"] += 1
+    return idx
+
+
+def _compute_hash(file_path: str) -> str:
+    h = hashlib.md5()
+    h.update(str(os.path.getsize(file_path)).encode())
+    with open(file_path, "rb") as f:
+        h.update(f.read(10 * 1024 * 1024))
+    return h.hexdigest()
+
+
+def _is_duplicate(creator: str, file_path: str) -> bool:
+    today = _today()
+    if creator not in _daily_hashes or _daily_hashes[creator]["date"] != today:
+        _daily_hashes[creator] = {"date": today, "hashes": set()}
+    file_hash = _compute_hash(file_path)
+    if file_hash in _daily_hashes[creator]["hashes"]:
+        return True
+    _daily_hashes[creator]["hashes"].add(file_hash)
+    return False
+
+
+def _get_slots(video_index: int) -> list[int]:
+    """Return 3 slot numbers for this video (1-indexed, sequential rotation)."""
+    start = (video_index * 3) % SLOTS_PER_CREATOR
+    return [(start + i) % SLOTS_PER_CREATOR + 1 for i in range(3)]
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +131,7 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
     """Send each video to approval group as .mp4 file + separate buttons message.
     videos: list of {"file_name": str, "path": str} — paths to temp files on disk.
     Files are kept alive in PENDING_APPROVALS and deleted after approve/reject."""
-    targets = VIDEO_DISTRIBUTION_TARGETS
-    half = len(videos) // 2 or 1
+    topic_id = SLOT_CREATORS[model_name]
 
     session_string = os.environ.get("TG_SESSION", "")
     api_id = int(os.environ.get("TG_API_ID", 0))
@@ -92,14 +140,43 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
     async with Client("uploader", api_id=api_id, api_hash=api_hash, session_string=session_string) as app:
         async with httpx.AsyncClient(timeout=180) as client:
             for i, video in enumerate(videos):
+                # Duplicate check
+                if _is_duplicate(model_name, video["path"]):
+                    logger.warning(f"Duplicate detected: {video['file_name']} for {model_name}")
+                    await client.post(
+                        f"{_telegram_api()}/sendMessage",
+                        json={
+                            "chat_id": APPROVAL_CHAT_ID,
+                            "text": (
+                                f"⚠️ Duplikat erkannt!\n"
+                                f"📁 {video['file_name']} ({model_name})\n"
+                                f"Dieses Video wurde heute bereits hochgeladen."
+                            ),
+                        },
+                    )
+                    if os.path.exists(video["path"]):
+                        os.unlink(video["path"])
+                    continue
+
+                # Calculate slots
+                video_index = _get_and_increment_counter(model_name)
+                slots = _get_slots(video_index)
+                slots_text = " | ".join(f"Slot {s}" for s in slots)
+
+                # For Margaret: also route to Behave x Amin
+                behave_target = None
+                if model_name == "Margaret Asian":
+                    behave_target = VIDEO_DISTRIBUTION_TARGETS[video_index % 2]
+
                 token = secrets.token_urlsafe(16)
-                target = targets[0] if i < half else targets[1]
                 PENDING_APPROVALS[token] = {
                     "file_path": video["path"],
                     "file_name": video["file_name"],
-                    "target": target,
                     "model_name": model_name,
                     "content_type": content_type,
+                    "topic_id": topic_id,
+                    "slots": slots,
+                    "behave_target": behave_target,
                 }
 
                 # 1. Send file as .mp4 document via Hydrogram (directly from disk)
@@ -118,7 +195,7 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
                 caption = (
                     f"🎬 {model_name} — {content_type}\n"
                     f"📁 {video['file_name']}\n"
-                    f"→ Thread {target['thread_id']}"
+                    f"📌 {slots_text}"
                 )
                 resp = await client.post(
                     f"{_telegram_api()}/sendMessage",
@@ -153,11 +230,12 @@ async def handle_callback(cq: dict) -> None:
     pending = PENDING_APPROVALS.pop(token)
 
     if action == "approve":
+        slots_text = " | ".join(f"Slot {s}" for s in pending.get("slots", []))
         await _edit_caption(chat_id, message_id,
-            f"⏳ Wird gesendet → Thread {pending['target']['thread_id']}…")
+            f"⏳ Wird gesendet → AI Models Reels ({pending['model_name']})…")
         await _send_approved_video(pending)
         await _edit_caption(chat_id, message_id,
-            f"✅ Gesendet → Thread {pending['target']['thread_id']}\n📁 {pending['file_name']}")
+            f"✅ Gesendet → {pending['model_name']}\n📌 {slots_text}\n📁 {pending['file_name']}")
     elif action == "reject":
         file_path = pending.get("file_path", "")
         if file_path and os.path.exists(file_path):
@@ -175,23 +253,37 @@ async def _edit_caption(chat_id: int, message_id: int, text: str) -> None:
 
 
 async def _send_approved_video(pending: dict) -> None:
-    """Send a single approved video as .mp4 document via Hydrogram. Deletes the temp file after sending."""
-    target = pending["target"]
+    """Send approved video to AI Models Reels topic (+ Behave x Amin for Margaret). Deletes temp file after."""
     file_path = pending["file_path"]
+    slots_caption = "📌 Posten auf: " + " | ".join(f"Slot {s}" for s in pending.get("slots", []))
     session_string = os.environ.get("TG_SESSION", "")
     api_id = int(os.environ.get("TG_API_ID", 0))
     api_hash = os.environ.get("TG_API_HASH", "")
 
     async with Client("uploader", api_id=api_id, api_hash=api_hash, session_string=session_string) as app:
         try:
+            # 1. Send to AI Models Reels (creator-specific topic)
             await app.send_document(
-                chat_id=int(target["chat_id"]),
+                chat_id=AI_MODELS_REELS_CHAT_ID,
                 document=file_path,
                 file_name=pending["file_name"],
-                message_thread_id=target["thread_id"],
+                message_thread_id=pending["topic_id"],
+                caption=slots_caption,
                 force_document=True,
             )
-            logger.info(f"Approved & sent: {pending['file_name']} → thread {target['thread_id']}")
+            logger.info(f"Approved & sent: {pending['file_name']} → AI Models Reels topic {pending['topic_id']}")
+
+            # 2. Margaret Asian → also send to Behave x Amin
+            if pending.get("behave_target"):
+                bt = pending["behave_target"]
+                await app.send_document(
+                    chat_id=int(bt["chat_id"]),
+                    document=file_path,
+                    file_name=pending["file_name"],
+                    message_thread_id=bt["thread_id"],
+                    force_document=True,
+                )
+                logger.info(f"Also sent to Behave x Amin thread {bt['thread_id']}")
         except Exception as e:
             logger.error(f"Error sending approved video: {e}")
         finally:
