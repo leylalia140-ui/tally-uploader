@@ -160,22 +160,7 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
         async with httpx.AsyncClient(timeout=180) as client:
             for i, video in enumerate(videos):
                 # Duplicate check
-                if _is_duplicate(model_name, video["path"]):
-                    logger.warning(f"Duplicate detected: {video['file_name']} for {model_name}")
-                    await client.post(
-                        f"{_telegram_api()}/sendMessage",
-                        json={
-                            "chat_id": APPROVAL_CHAT_ID,
-                            "text": (
-                                f"⚠️ Duplikat erkannt!\n"
-                                f"📁 {video['file_name']} ({model_name})\n"
-                                f"Dieses Video wurde heute bereits hochgeladen."
-                            ),
-                        },
-                    )
-                    if os.path.exists(video["path"]):
-                        os.unlink(video["path"])
-                    continue
+                is_dup = _is_duplicate(model_name, video["path"])
 
                 # Calculate slots
                 video_index = _get_and_increment_counter(model_name)
@@ -212,8 +197,9 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
                     logger.error(f"Error sending approval file: {e}")
 
                 # 2. Send buttons message via Bot API
+                dup_prefix = "⚠️ Duplikat!\n" if is_dup else ""
                 caption = (
-                    f"🎬 {model_name} — {content_type}\n"
+                    f"{dup_prefix}🎬 {model_name} — {content_type}\n"
                     f"📁 {video['file_name']}\n"
                     f"📌 {slots_text}"
                 )
