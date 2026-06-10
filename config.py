@@ -44,6 +44,7 @@ SLOT_CREATORS = {
     "Margaret Asian": 4,
     "Abby Parker": 3,
     "Yuki Chen": 2,
+    "Sherry Hicks": 236,
 }
 
 # ──────────────────────────────────────────────
