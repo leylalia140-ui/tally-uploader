@@ -262,7 +262,14 @@ async def _do_process_all_uploads(uploads: list[dict]) -> None:
                 raise
 
             if model_name in SLOT_CREATORS:
-                approval_videos.append({"file_name": file_name, "path": video_path})
+                sherry_needs_approval = (
+                    model_name == "Sherry Hicks"
+                    and content_type in ("Instagram Reels", "Full AI Content")
+                )
+                if model_name != "Sherry Hicks" or sherry_needs_approval:
+                    approval_videos.append({"file_name": file_name, "path": video_path})
+                else:
+                    os.unlink(video_path)
             else:
                 os.unlink(video_path)
 
