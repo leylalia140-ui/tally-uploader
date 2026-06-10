@@ -13,7 +13,8 @@ from config import (
 
 BERLIN = ZoneInfo("Europe/Berlin")
 APPROVAL_CHAT_ID = -1004259848545
-PENDING_APPROVALS: dict = {}  # token → {file_path, file_name, model_name, content_type, slots, topic_id, behave_target}
+PENDING_APPROVALS: dict = {}   # token → {file_path, file_name, model_name, content_type, slots, topic_id, behave_target}
+REJECTED_APPROVALS: dict = {}  # token → pending-dict + "rejected_at" + "chat_id" + "message_id"
 
 # ── Daily slot counters (reset each Berlin midnight) ──
 _daily_counters: dict[str, dict] = {}  # creator → {"date": date, "count": int}
@@ -51,6 +52,20 @@ def _is_duplicate(creator: str, file_path: str) -> bool:
         return True
     _daily_hashes[creator]["hashes"].add(file_hash)
     return False
+
+
+def _remove_hash(creator: str, file_path: str) -> None:
+    """Remove a file's hash from the duplicate-detection set (used on reject/undo)."""
+    if creator not in _daily_hashes:
+        return
+    today = _today()
+    if _daily_hashes[creator]["date"] != today:
+        return
+    try:
+        file_hash = _compute_hash(file_path)
+        _daily_hashes[creator]["hashes"].discard(file_hash)
+    except Exception:
+        pass
 
 
 def _get_slots(video_index: int) -> list[int]:
@@ -218,8 +233,22 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
                     logger.warning(f"Buttons send failed: {resp.text}")
 
 
+async def _edit_caption_with_buttons(chat_id: int, message_id: int, text: str, keyboard: list) -> None:
+    async with httpx.AsyncClient(timeout=10) as client:
+        await client.post(
+            f"{_telegram_api()}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": text,
+                "reply_markup": {"inline_keyboard": keyboard},
+            },
+        )
+
+
 async def handle_callback(cq: dict) -> None:
-    """Handle approve/reject button presses."""
+    """Handle approve/reject/undo button presses."""
+    from datetime import datetime, timedelta
     data = cq.get("data", "")
     message = cq.get("message", {})
     chat_id = message.get("chat", {}).get("id")
@@ -228,6 +257,36 @@ async def handle_callback(cq: dict) -> None:
     if ":" not in data:
         return
     action, token = data.split(":", 1)
+
+    # ── Undo rejected ──
+    if action == "undo":
+        if token not in REJECTED_APPROVALS:
+            await _edit_caption(chat_id, message_id, "⚠️ Rückgängig nicht mehr möglich — Datei bereits gelöscht")
+            return
+        rejected = REJECTED_APPROVALS.pop(token)
+        file_path = rejected.get("file_path", "")
+        if not file_path or not os.path.exists(file_path):
+            await _edit_caption(chat_id, message_id, "⚠️ Datei nicht mehr verfügbar — bitte neu hochladen")
+            return
+        # Restore to pending (hash already removed on reject, re-add it)
+        _daily_hashes.setdefault(rejected["model_name"], {"date": _today(), "hashes": set()})
+        try:
+            _daily_hashes[rejected["model_name"]]["hashes"].add(_compute_hash(file_path))
+        except Exception:
+            pass
+        PENDING_APPROVALS[token] = {k: v for k, v in rejected.items()
+                                     if k not in ("rejected_at", "chat_id", "message_id")}
+        slots_text = " | ".join(f"Account {s}" for s in rejected.get("slots", []))
+        caption = (
+            f"🎬 {rejected['model_name']} — {rejected['content_type']}\n"
+            f"📁 {rejected['file_name']}\n"
+            f"📌 {slots_text}"
+        )
+        await _edit_caption_with_buttons(chat_id, message_id, caption, [[
+            {"text": "✅ Approve", "callback_data": f"approve:{token}"},
+            {"text": "❌ Reject",  "callback_data": f"reject:{token}"},
+        ]])
+        return
 
     if token not in PENDING_APPROVALS:
         await _edit_caption(chat_id, message_id, "⚠️ Session abgelaufen — bitte neu hochladen")
@@ -244,10 +303,20 @@ async def handle_callback(cq: dict) -> None:
             f"✅ Gesendet → {pending['model_name']}\n📌 {slots_text}\n📁 {pending['file_name']}")
     elif action == "reject":
         file_path = pending.get("file_path", "")
+        # Remove hash so the video can be re-uploaded via Tally without duplicate warning
         if file_path and os.path.exists(file_path):
-            os.unlink(file_path)
-        await _edit_caption(chat_id, message_id,
-            f"❌ Abgelehnt — {pending['file_name']}")
+            _remove_hash(pending["model_name"], file_path)
+        # Keep file alive for undo; store in REJECTED_APPROVALS
+        REJECTED_APPROVALS[token] = {
+            **pending,
+            "rejected_at": datetime.now(),
+            "chat_id": chat_id,
+            "message_id": message_id,
+        }
+        await _edit_caption_with_buttons(chat_id, message_id,
+            f"❌ Abgelehnt — {pending['file_name']}",
+            [[{"text": "↩️ Rückgängig", "callback_data": f"undo:{token}"}]]
+        )
 
 
 async def _edit_caption(chat_id: int, message_id: int, text: str) -> None:
