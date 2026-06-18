@@ -146,7 +146,10 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
     """Send each video to approval group as .mp4 file + separate buttons message.
     videos: list of {"file_name": str, "path": str} — paths to temp files on disk.
     Files are kept alive in PENDING_APPROVALS and deleted after approve/reject."""
-    topic_id = NICHE_TOPICS.get((model_name, niche)) or SLOT_CREATORS[model_name]
+    # approval_topic: always the model's main topic in the approval group
+    approval_topic_id = SLOT_CREATORS[model_name]
+    # dest_topic: niche-specific topic in AI Models Reels (used after approval)
+    dest_topic_id = NICHE_TOPICS.get((model_name, niche)) or SLOT_CREATORS[model_name]
 
     session_string = os.environ.get("TG_SESSION", "")
     api_id = int(os.environ.get("TG_API_ID", 0))
@@ -179,7 +182,7 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
                     "model_name": model_name,
                     "content_type": content_type,
                     "niche": niche,
-                    "topic_id": topic_id,
+                    "topic_id": dest_topic_id,
                     "slots": slots,
                     "behave_target": behave_target,
                 }
@@ -190,7 +193,7 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
                         chat_id=APPROVAL_CHAT_ID,
                         document=video["path"],
                         file_name=video["file_name"],
-                        message_thread_id=topic_id,
+                        message_thread_id=approval_topic_id,
                         force_document=True,
                     )
                     logger.info(f"Sent file for approval: {video['file_name']}")
@@ -210,7 +213,7 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
                     f"{_telegram_api()}/sendMessage",
                     json={
                         "chat_id": APPROVAL_CHAT_ID,
-                        "message_thread_id": topic_id,
+                        "message_thread_id": approval_topic_id,
                         "text": caption,
                         "reply_markup": {"inline_keyboard": [[
                             {"text": "✅ Approve", "callback_data": f"approve:{token}"},
