@@ -39,12 +39,21 @@ MODEL_CONTENT_RESTRICTIONS = {
 AI_MODELS_REELS_CHAT_ID = -1003965304219
 SLOTS_PER_CREATOR = 6  # accounts per creator
 
-# Creator → Topic-ID in "AI Models Reels" Forum-Supergroup
+# Creator → Topic-ID in "AI Models Reels" Forum-Supergroup (fallback / models ohne Nische)
 SLOT_CREATORS = {
     "Margaret Asian": 4,
     "Abby Parker": 3,
     "Yuki Chen": 2,
     "Sherry Hicks": 236,
+}
+
+# (Model, Nische) → Topic-ID — überschreibt SLOT_CREATORS wenn Nische bekannt
+NICHE_TOPICS = {
+    ("Margaret Asian", "Snapchat Based Reels"): 270,
+    ("Margaret Asian", "School Girl Reels"):    4,
+    ("Margaret Asian", "Shell Reels"):          271,
+    ("Yuki Chen",      "Snapchat Based Reels"): 269,
+    ("Yuki Chen",      "School Girl Reels"):    2,
 }
 
 # ──────────────────────────────────────────────

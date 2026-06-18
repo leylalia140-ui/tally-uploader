@@ -93,6 +93,7 @@ def extract_uploads(payload: dict) -> list[dict]:
 
     model_name = ""
     content_type = ""
+    niche = ""
     file_objects = []
 
     for f in fields_raw:
@@ -105,17 +106,23 @@ def extract_uploads(payload: dict) -> list[dict]:
         elif label in ("Was für eine Art von Content lädst du hoch?", "What kind of Content?"):
             content_type = _resolve_dropdown(f) or ""
 
+        elif label in ("Margaret Niche", "Yuki Niche"):
+            val = _resolve_dropdown(f) or ""
+            if val:
+                niche = val
+
         elif ftype == "FILE_UPLOAD":
             files = f.get("value")
             if files and isinstance(files, list):
                 file_objects.extend([fo for fo in files if fo])
 
-    logger.info(f"Parsed: model='{model_name}' content_type='{content_type}' files={len(file_objects)}")
+    logger.info(f"Parsed: model='{model_name}' content_type='{content_type}' niche='{niche}' files={len(file_objects)}")
 
     return [
         {
             "model": model_name,
             "content_type": content_type,
+            "niche": niche,
             "form_id": form_id,
             "file_url": fo.get("url"),
             "file_name": fo.get("name", "upload.mp4"),
@@ -195,6 +202,7 @@ async def process_all_uploads(uploads: list[dict]) -> None:
 async def _do_process_all_uploads(uploads: list[dict]) -> None:
     model_name = uploads[0].get("model", "").strip()
     content_type = uploads[0].get("content_type", "").strip()
+    niche = uploads[0].get("niche", "").strip()
     date_str = format_date(datetime.now(BERLIN))
     form_id = uploads[0].get("form_id", "")
 
@@ -277,7 +285,7 @@ async def _do_process_all_uploads(uploads: list[dict]) -> None:
         logger.info(f"Folder link: {folder_link}")
 
         if model_name in SLOT_CREATORS and approval_videos:
-            await telegram_bot.send_for_approval(approval_videos, model_name, content_type)
+            await telegram_bot.send_for_approval(approval_videos, model_name, content_type, niche)
             # telegram_bot.py owns the files now and cleans them up after approve/reject
 
         await telegram_bot.send_notifications(

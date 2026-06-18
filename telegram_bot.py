@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from hydrogram import Client
 from config import (
     settings, TELEGRAM_ROUTING, VIDEO_DISTRIBUTION_TARGETS,
-    SLOT_CREATORS, AI_MODELS_REELS_CHAT_ID, SLOTS_PER_CREATOR,
+    SLOT_CREATORS, NICHE_TOPICS, AI_MODELS_REELS_CHAT_ID, SLOTS_PER_CREATOR,
 )
 
 BERLIN = ZoneInfo("Europe/Berlin")
@@ -142,11 +142,11 @@ async def send_error_notification(detail: str) -> None:
             logger.error(f"Failed to send error notification: {e}")
 
 
-async def send_for_approval(videos: list[dict], model_name: str, content_type: str) -> None:
+async def send_for_approval(videos: list[dict], model_name: str, content_type: str, niche: str = "") -> None:
     """Send each video to approval group as .mp4 file + separate buttons message.
     videos: list of {"file_name": str, "path": str} — paths to temp files on disk.
     Files are kept alive in PENDING_APPROVALS and deleted after approve/reject."""
-    topic_id = SLOT_CREATORS[model_name]
+    topic_id = NICHE_TOPICS.get((model_name, niche)) or SLOT_CREATORS[model_name]
 
     session_string = os.environ.get("TG_SESSION", "")
     api_id = int(os.environ.get("TG_API_ID", 0))
@@ -178,6 +178,7 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
                     "file_name": video["file_name"],
                     "model_name": model_name,
                     "content_type": content_type,
+                    "niche": niche,
                     "topic_id": topic_id,
                     "slots": slots,
                     "behave_target": behave_target,
@@ -198,8 +199,10 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
 
                 # 2. Send buttons message via Bot API
                 dup_prefix = "⚠️ Duplikat!\n" if is_dup else ""
+                niche_line = f"🏷 {niche}\n" if niche else ""
                 caption = (
                     f"{dup_prefix}🎬 {model_name} — {content_type}\n"
+                    f"{niche_line}"
                     f"📁 {video['file_name']}\n"
                     f"📌 {slots_text}"
                 )
