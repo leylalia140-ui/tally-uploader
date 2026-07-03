@@ -7,6 +7,7 @@ class Settings:
     )
     TELEGRAM_BOT_TOKEN: str = os.environ.get("TG_TOKEN", os.environ.get("TELEGRAM_BOT_TOKEN", ""))
     TALLY_SIGNING_SECRET: str | None = os.environ.get("TALLY_SIGNING_SECRET")
+    ADMIN_SECRET: str = os.environ.get("ADMIN_SECRET", "")
     PORT: int = int(os.environ.get("PORT", "8000"))
     HOST: str = os.environ.get("HOST", "0.0.0.0")
 

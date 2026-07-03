@@ -353,6 +353,17 @@ async def telegram_callback(request: Request):
     return {"ok": True}
 
 
+@app.post("/admin/bulk_approve")
+async def admin_bulk_approve(request: Request, x_admin_secret: Optional[str] = Header(None)):
+    if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="forbidden")
+    body = await request.json()
+    models = body.get("models", [])
+    if not models:
+        raise HTTPException(status_code=400, detail="models required")
+    return await telegram_bot.bulk_approve(models)
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}

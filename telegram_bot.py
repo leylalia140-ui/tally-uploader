@@ -361,6 +361,21 @@ async def _send_approved_video(pending: dict) -> None:
                 os.unlink(file_path)
 
 
+async def bulk_approve(model_names: list[str]) -> dict:
+    """Approve every currently pending video for the given creators at once
+    (same effect as clicking ✅ Approve on each), without editing the original
+    approval-group messages (those buttons will just show 'session expired' if pressed later)."""
+    tokens = [t for t, p in list(PENDING_APPROVALS.items()) if p["model_name"] in model_names]
+    approved = []
+    for token in tokens:
+        pending = PENDING_APPROVALS.pop(token, None)
+        if not pending:
+            continue
+        await _send_approved_video(pending)
+        approved.append({"model_name": pending["model_name"], "file_name": pending["file_name"]})
+    return {"approved_count": len(approved), "approved": approved}
+
+
 async def distribute_videos(videos: list[dict]) -> None:
     """
     Distribute converted videos across VIDEO_DISTRIBUTION_TARGETS via Pyrogram.
