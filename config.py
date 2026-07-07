@@ -71,6 +71,15 @@ VIDEO_DISTRIBUTION_TARGETS = [
     {"chat_id": "-1003604359153", "thread_id": 372},
 ]
 
+# ──────────────────────────────────────────────
+# VA Telegram user IDs — used to DM reject reasons directly
+# IDs captured via getUpdates after each VA sent /start to @BehaveAgencyBot
+# ──────────────────────────────────────────────
+VA_TELEGRAM_IDS = {
+    "Ken": 5900218841,
+    "James": 5512507496,
+}
+
 TELEGRAM_ROUTING = [
     {
         "name": "VA 6",

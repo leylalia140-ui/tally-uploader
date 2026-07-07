@@ -38,7 +38,7 @@ async def startup_event():
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.post(
             f"https://api.telegram.org/bot{token}/setWebhook",
-            json={"url": webhook_url, "allowed_updates": ["callback_query"]},
+            json={"url": webhook_url, "allowed_updates": ["callback_query", "message"]},
         )
         logger.info(f"Webhook set: {r.json().get('description', r.text)}")
 
@@ -94,6 +94,7 @@ def extract_uploads(payload: dict) -> list[dict]:
     model_name = ""
     content_type = ""
     niche = ""
+    va_name = ""
     file_objects = []
 
     for f in fields_raw:
@@ -111,6 +112,9 @@ def extract_uploads(payload: dict) -> list[dict]:
             if val:
                 niche = val
 
+        elif label in ("Wer lädst du hoch?", "Who is uploading this?"):
+            va_name = _resolve_dropdown(f) or ""
+
         elif ftype == "FILE_UPLOAD":
             files = f.get("value")
             if files and isinstance(files, list):
@@ -123,6 +127,7 @@ def extract_uploads(payload: dict) -> list[dict]:
             "model": model_name,
             "content_type": content_type,
             "niche": niche,
+            "va_name": va_name,
             "form_id": form_id,
             "file_url": fo.get("url"),
             "file_name": fo.get("name", "upload.mp4"),
@@ -203,6 +208,7 @@ async def _do_process_all_uploads(uploads: list[dict]) -> None:
     model_name = uploads[0].get("model", "").strip()
     content_type = uploads[0].get("content_type", "").strip()
     niche = uploads[0].get("niche", "").strip()
+    va_name = uploads[0].get("va_name", "").strip()
     date_str = format_date(datetime.now(BERLIN))
     form_id = uploads[0].get("form_id", "")
 
@@ -285,7 +291,7 @@ async def _do_process_all_uploads(uploads: list[dict]) -> None:
         logger.info(f"Folder link: {folder_link}")
 
         if model_name in SLOT_CREATORS and approval_videos:
-            await telegram_bot.send_for_approval(approval_videos, model_name, content_type, niche)
+            await telegram_bot.send_for_approval(approval_videos, model_name, content_type, niche, va_name)
             # telegram_bot.py owns the files now and cleans them up after approve/reject
 
         await telegram_bot.send_notifications(
@@ -350,6 +356,8 @@ async def telegram_callback(request: Request):
                 f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/answerCallbackQuery",
                 json={"callback_query_id": cq["id"]},
             )
+    elif "message" in data and "reply_to_message" in data["message"]:
+        await telegram_bot.handle_reason_reply(data["message"])
     return {"ok": True}
 
 

@@ -49,7 +49,13 @@ class GoogleDriveClient:
         )
         result = (
             self.service.files()
-            .list(q=query, fields="files(id, name)", pageSize=1)
+            .list(
+                q=query,
+                fields="files(id, name)",
+                pageSize=1,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+            )
             .execute()
         )
         files = result.get("files", [])
@@ -62,7 +68,11 @@ class GoogleDriveClient:
             "mimeType": "application/vnd.google-apps.folder",
             "parents": [parent_id],
         }
-        folder = self.service.files().create(body=metadata, fields="id").execute()
+        folder = (
+            self.service.files()
+            .create(body=metadata, fields="id", supportsAllDrives=True)
+            .execute()
+        )
         logger.info(f"Created folder '{name}' (id={folder['id']})")
         return folder["id"]
 
@@ -109,7 +119,12 @@ class GoogleDriveClient:
         )
         created = (
             self.service.files()
-            .create(body=metadata, media_body=media, fields="id, name, webViewLink")
+            .create(
+                body=metadata,
+                media_body=media,
+                fields="id, name, webViewLink",
+                supportsAllDrives=True,
+            )
             .execute()
         )
         logger.info(f"Uploaded '{file_name}' → id={created['id']}")
@@ -120,6 +135,7 @@ class GoogleDriveClient:
         self.service.permissions().create(
             fileId=file_id,
             body={"type": "anyone", "role": "reader"},
+            supportsAllDrives=True,
         ).execute()
         return f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
 
@@ -128,5 +144,6 @@ class GoogleDriveClient:
         self.service.permissions().create(
             fileId=folder_id,
             body={"type": "anyone", "role": "reader"},
+            supportsAllDrives=True,
         ).execute()
         return f"https://drive.google.com/drive/folders/{folder_id}?usp=sharing"

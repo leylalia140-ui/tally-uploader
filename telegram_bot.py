@@ -9,12 +9,14 @@ from hydrogram import Client
 from config import (
     settings, TELEGRAM_ROUTING, VIDEO_DISTRIBUTION_TARGETS,
     SLOT_CREATORS, NICHE_TOPICS, AI_MODELS_REELS_CHAT_ID, SLOTS_PER_CREATOR,
+    VA_TELEGRAM_IDS,
 )
 
 BERLIN = ZoneInfo("Europe/Berlin")
 APPROVAL_CHAT_ID = -1004259848545
-PENDING_APPROVALS: dict = {}   # token → {file_path, file_name, model_name, content_type, slots, topic_id, behave_target}
+PENDING_APPROVALS: dict = {}   # token → {file_path, file_name, model_name, content_type, slots, topic_id, behave_target, va_name}
 REJECTED_APPROVALS: dict = {}  # token → pending-dict + "rejected_at" + "chat_id" + "message_id"
+AWAITING_REASON: dict = {}    # force-reply message_id → {token, va_name, file_name}
 
 # ── Daily slot counters (reset each Berlin midnight) ──
 _daily_counters: dict[str, dict] = {}  # creator → {"date": date, "count": int}
@@ -131,7 +133,7 @@ def _build_message(
 
 async def send_error_notification(detail: str) -> None:
     """Send upload failure notice to VA 6 only."""
-    message = f"⚠️ Upload fehlgeschlagen: Webhook-Daten unvollständig oder fehlend."
+    message = f"⚠️ Upload fehlgeschlagen: {detail}"
     async with httpx.AsyncClient(timeout=15) as client:
         try:
             await client.post(
@@ -142,7 +144,7 @@ async def send_error_notification(detail: str) -> None:
             logger.error(f"Failed to send error notification: {e}")
 
 
-async def send_for_approval(videos: list[dict], model_name: str, content_type: str, niche: str = "") -> None:
+async def send_for_approval(videos: list[dict], model_name: str, content_type: str, niche: str = "", va_name: str = "") -> None:
     """Send each video to approval group as .mp4 file + separate buttons message.
     videos: list of {"file_name": str, "path": str} — paths to temp files on disk.
     Files are kept alive in PENDING_APPROVALS and deleted after approve/reject."""
@@ -185,6 +187,7 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
                     "topic_id": dest_topic_id,
                     "slots": slots,
                     "behave_target": behave_target,
+                    "va_name": va_name,
                 }
 
                 # 1. Send file as .mp4 document via Hydrogram (directly from disk)
@@ -203,9 +206,11 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
                 # 2. Send buttons message via Bot API
                 dup_prefix = "⚠️ Duplikat!\n" if is_dup else ""
                 niche_line = f"🏷 {niche}\n" if niche else ""
+                va_line = f"👤 {va_name}\n" if va_name else ""
                 caption = (
                     f"{dup_prefix}🎬 {model_name} — {content_type}\n"
                     f"{niche_line}"
+                    f"{va_line}"
                     f"📁 {video['file_name']}\n"
                     f"📌 {slots_text}"
                 )
@@ -269,8 +274,10 @@ async def handle_callback(cq: dict) -> None:
         PENDING_APPROVALS[token] = {k: v for k, v in rejected.items()
                                      if k not in ("rejected_at", "chat_id", "message_id")}
         slots_text = " | ".join(f"Account {s}" for s in rejected.get("slots", []))
+        va_line = f"👤 {rejected['va_name']}\n" if rejected.get("va_name") else ""
         caption = (
             f"🎬 {rejected['model_name']} — {rejected['content_type']}\n"
+            f"{va_line}"
             f"📁 {rejected['file_name']}\n"
             f"📌 {slots_text}"
         )
@@ -309,6 +316,86 @@ async def handle_callback(cq: dict) -> None:
             f"❌ Abgelehnt — {pending['file_name']}",
             [[{"text": "↩️ Rückgängig", "callback_data": f"undo:{token}"}]]
         )
+
+        # Ask for a reject reason to forward to the VA via DM
+        va_name = pending.get("va_name", "")
+        if va_name and va_name in VA_TELEGRAM_IDS:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    f"{_telegram_api()}/sendMessage",
+                    json={
+                        "chat_id": chat_id,
+                        "message_thread_id": message.get("message_thread_id"),
+                        "text": f"✏️ Was muss {va_name} besser machen? (Antworte auf diese Nachricht — {va_name} bekommt sie per DM)",
+                        "reply_markup": {"force_reply": True, "selective": True},
+                    },
+                )
+                data_resp = resp.json()
+                if data_resp.get("ok"):
+                    prompt_message_id = data_resp["result"]["message_id"]
+                    AWAITING_REASON[prompt_message_id] = {
+                        "va_name": va_name,
+                        "file_name": pending["file_name"],
+                        "file_path": pending.get("file_path", ""),
+                    }
+                else:
+                    logger.warning(f"Reject-reason prompt failed: {data_resp}")
+
+
+async def handle_reason_reply(message: dict) -> None:
+    """Handle a reply to the reject-reason ForceReply prompt — forwards the reason to the VA via DM."""
+    reply_to = message.get("reply_to_message")
+    if not reply_to:
+        return
+    prompt_id = reply_to.get("message_id")
+    if prompt_id not in AWAITING_REASON:
+        return
+    info = AWAITING_REASON.pop(prompt_id)
+    reason_text = message.get("text", "").strip()
+    va_name = info["va_name"]
+    va_user_id = VA_TELEGRAM_IDS.get(va_name)
+    chat_id = message.get("chat", {}).get("id")
+    thread_id = message.get("message_thread_id")
+
+    if not reason_text or not va_user_id:
+        return
+
+    caption = f"🔁 This video needs to be reworked:\n\n{reason_text}"
+    file_path = info.get("file_path", "")
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        if file_path and os.path.exists(file_path):
+            with open(file_path, "rb") as f:
+                dm_resp = await client.post(
+                    f"{_telegram_api()}/sendDocument",
+                    data={"chat_id": va_user_id, "caption": caption},
+                    files={"document": (info["file_name"], f)},
+                )
+        else:
+            dm_resp = await client.post(
+                f"{_telegram_api()}/sendMessage",
+                json={"chat_id": va_user_id, "text": caption},
+            )
+
+        if dm_resp.json().get("ok"):
+            await client.post(
+                f"{_telegram_api()}/sendMessage",
+                json={
+                    "chat_id": chat_id,
+                    "message_thread_id": thread_id,
+                    "text": f"✅ An {va_name} geschickt (mit Video): \"{reason_text}\"",
+                },
+            )
+        else:
+            logger.warning(f"Reject-reason DM to {va_name} failed: {dm_resp.text}")
+            await client.post(
+                f"{_telegram_api()}/sendMessage",
+                json={
+                    "chat_id": chat_id,
+                    "message_thread_id": thread_id,
+                    "text": f"⚠️ Konnte {va_name} nicht per DM erreichen — hat er/sie den Bot gestartet?",
+                },
+            )
 
 
 async def _edit_caption(chat_id: int, message_id: int, text: str) -> None:
