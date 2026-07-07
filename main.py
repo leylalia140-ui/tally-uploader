@@ -1,10 +1,12 @@
 import asyncio
 import hashlib
 import hmac
+import json
 import logging
 import os
 import subprocess
 import tempfile
+import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -41,6 +43,7 @@ async def startup_event():
             json={"url": webhook_url, "allowed_updates": ["callback_query", "message"]},
         )
         logger.info(f"Webhook set: {r.json().get('description', r.text)}")
+    asyncio.create_task(_periodic_retry_loop())
 
 
 # ──────────────────────────────────────────────────────────────
@@ -204,7 +207,71 @@ async def process_all_uploads(uploads: list[dict]) -> None:
         await _do_process_all_uploads(uploads)
 
 
+FAILED_DIR = "/data/failed_uploads"
+
+
+def _save_failed_uploads(uploads: list[dict]) -> str:
+    os.makedirs(FAILED_DIR, exist_ok=True)
+    upload_id = f"{datetime.now(BERLIN):%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
+    with open(os.path.join(FAILED_DIR, f"{upload_id}.json"), "w") as f:
+        json.dump(uploads, f)
+    return upload_id
+
+
+def _list_failed_uploads() -> list[str]:
+    if not os.path.isdir(FAILED_DIR):
+        return []
+    return sorted(f for f in os.listdir(FAILED_DIR) if f.endswith(".json"))
+
+
+async def _retry_failed_upload(filename: str) -> Optional[str]:
+    """Retries one saved failed upload. Returns an error string on failure, None on success."""
+    path = os.path.join(FAILED_DIR, filename)
+    with open(path) as f:
+        uploads = json.load(f)
+    try:
+        await _process_uploads_core(uploads)
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
+    os.remove(path)
+    return None
+
+
+async def _retry_all_failed_uploads() -> None:
+    for filename in _list_failed_uploads():
+        error = await _retry_failed_upload(filename)
+        if error:
+            logger.warning(f"Retry still failing for {filename}: {error}")
+        else:
+            logger.info(f"Retry succeeded for {filename}")
+
+
+async def _periodic_retry_loop() -> None:
+    while True:
+        await asyncio.sleep(15 * 60)
+        try:
+            if _list_failed_uploads():
+                await _retry_all_failed_uploads()
+        except Exception as e:
+            logger.error(f"Periodic retry loop error: {e}", exc_info=True)
+
+
 async def _do_process_all_uploads(uploads: list[dict]) -> None:
+    model_name = uploads[0].get("model", "").strip()
+    content_type = uploads[0].get("content_type", "").strip()
+    try:
+        await _process_uploads_core(uploads)
+    except Exception as e:
+        logger.error(f"FATAL error processing upload for {model_name}: {e}", exc_info=True)
+        upload_id = _save_failed_uploads(uploads)
+        await telegram_bot.send_error_notification(
+            f"Upload fehlgeschlagen für {model_name} / {content_type}: {type(e).__name__}: {e}\n"
+            f"Gespeichert als {upload_id} — wird automatisch erneut versucht (alle 15 Min) "
+            f"oder per POST /admin/retry_failed."
+        )
+
+
+async def _process_uploads_core(uploads: list[dict]) -> None:
     model_name = uploads[0].get("model", "").strip()
     content_type = uploads[0].get("content_type", "").strip()
     niche = uploads[0].get("niche", "").strip()
@@ -212,100 +279,93 @@ async def _do_process_all_uploads(uploads: list[dict]) -> None:
     date_str = format_date(datetime.now(BERLIN))
     form_id = uploads[0].get("form_id", "")
 
-    try:
-        content_lower = content_type.lower()
-        if form_id == "wAq9ql":
-            folder_subfolder = "edited"
-        elif model_name == "Sherry Hicks":
-            folder_subfolder = "not edited"
-        elif model_name == "Margaret Asian" and form_id == "mVMbpj" and any(k in content_lower for k in ("ppv", "feed")):
-            folder_subfolder = "not edited"
+    content_lower = content_type.lower()
+    if form_id == "wAq9ql":
+        folder_subfolder = "edited"
+    elif model_name == "Sherry Hicks":
+        folder_subfolder = "not edited"
+    elif model_name == "Margaret Asian" and form_id == "mVMbpj" and any(k in content_lower for k in ("ppv", "feed")):
+        folder_subfolder = "not edited"
+    else:
+        folder_subfolder = "edited"
+    folder_path = ["Models", model_name, content_type, folder_subfolder, date_str]
+
+    drive = GoogleDriveClient()
+    folder_id = drive.resolve_folder_path(folder_path)
+
+    # Videos for Margaret Asian approval (file paths, not bytes)
+    approval_videos = []
+
+    for upload in uploads:
+        file_url = upload.get("file_url")
+        file_name = upload.get("file_name", "video.mp4")
+        mime_type = upload.get("mime_type", "video/mp4")
+
+        if not file_url:
+            logger.error(f"Missing file_url: {upload}")
+            continue
+
+        logger.info(f"Processing: {model_name} / {content_type} / {date_str} — {file_name}")
+        logger.info(f"Downloading: {file_url}")
+
+        # Stream directly to a temp file — never load the full video into RAM
+        ext_in = os.path.splitext(file_name)[1] or ".mp4"
+        with tempfile.NamedTemporaryFile(suffix=ext_in, delete=False) as tmp_f:
+            tmp_path = tmp_f.name
+            size = 0
+            async with httpx.AsyncClient(timeout=900, follow_redirects=True) as client:
+                async with client.stream("GET", file_url) as response:
+                    response.raise_for_status()
+                    async for chunk in response.aiter_bytes(chunk_size=10 * 1024 * 1024):
+                        tmp_f.write(chunk)
+                        size += len(chunk)
+        logger.info(f"Downloaded {size / 1024 / 1024:.1f} MB → {tmp_path}")
+
+        if content_type == "Full AI Content" and not is_image(file_name, mime_type):
+            # convert_to_h264 deletes tmp_path itself, returns new out_path
+            video_path, file_name = convert_to_h264(tmp_path, file_name)
+            mime_type = "video/mp4"
         else:
-            folder_subfolder = "edited"
-        folder_path = ["Models", model_name, content_type, folder_subfolder, date_str]
+            video_path = tmp_path
 
-        drive = GoogleDriveClient()
-        folder_id = drive.resolve_folder_path(folder_path)
-
-        # Videos for Margaret Asian approval (file paths, not bytes)
-        approval_videos = []
-
-        for upload in uploads:
-            file_url = upload.get("file_url")
-            file_name = upload.get("file_name", "video.mp4")
-            mime_type = upload.get("mime_type", "video/mp4")
-
-            if not file_url:
-                logger.error(f"Missing file_url: {upload}")
-                continue
-
-            logger.info(f"Processing: {model_name} / {content_type} / {date_str} — {file_name}")
-            logger.info(f"Downloading: {file_url}")
-
-            # Stream directly to a temp file — never load the full video into RAM
-            ext_in = os.path.splitext(file_name)[1] or ".mp4"
-            with tempfile.NamedTemporaryFile(suffix=ext_in, delete=False) as tmp_f:
-                tmp_path = tmp_f.name
-                size = 0
-                async with httpx.AsyncClient(timeout=900, follow_redirects=True) as client:
-                    async with client.stream("GET", file_url) as response:
-                        response.raise_for_status()
-                        async for chunk in response.aiter_bytes(chunk_size=10 * 1024 * 1024):
-                            tmp_f.write(chunk)
-                            size += len(chunk)
-            logger.info(f"Downloaded {size / 1024 / 1024:.1f} MB → {tmp_path}")
-
-            if content_type == "Full AI Content" and not is_image(file_name, mime_type):
-                # convert_to_h264 deletes tmp_path itself, returns new out_path
-                video_path, file_name = convert_to_h264(tmp_path, file_name)
-                mime_type = "video/mp4"
-            else:
-                video_path = tmp_path
-
-            try:
-                with open(video_path, "rb") as f:
-                    drive.upload_file(
-                        file_name=file_name,
-                        file_stream=f,
-                        folder_id=folder_id,
-                        mime_type=mime_type,
-                    )
-                logger.info(f"Uploaded to Drive: {file_name}")
-            except Exception:
-                os.unlink(video_path)
-                raise
-
-            if model_name in SLOT_CREATORS:
-                sherry_needs_approval = (
-                    model_name == "Sherry Hicks"
-                    and content_type in ("Instagram Reels", "Full AI Content")
+        try:
+            with open(video_path, "rb") as f:
+                drive.upload_file(
+                    file_name=file_name,
+                    file_stream=f,
+                    folder_id=folder_id,
+                    mime_type=mime_type,
                 )
-                if model_name != "Sherry Hicks" or sherry_needs_approval:
-                    approval_videos.append({"file_name": file_name, "path": video_path})
-                else:
-                    os.unlink(video_path)
+            logger.info(f"Uploaded to Drive: {file_name}")
+        except Exception:
+            os.unlink(video_path)
+            raise
+
+        if model_name in SLOT_CREATORS:
+            sherry_needs_approval = (
+                model_name == "Sherry Hicks"
+                and content_type in ("Instagram Reels", "Full AI Content")
+            )
+            if model_name != "Sherry Hicks" or sherry_needs_approval:
+                approval_videos.append({"file_name": file_name, "path": video_path})
             else:
                 os.unlink(video_path)
+        else:
+            os.unlink(video_path)
 
-        folder_link = drive.make_folder_public(folder_id)
-        logger.info(f"Folder link: {folder_link}")
+    folder_link = drive.make_folder_public(folder_id)
+    logger.info(f"Folder link: {folder_link}")
 
-        if model_name in SLOT_CREATORS and approval_videos:
-            await telegram_bot.send_for_approval(approval_videos, model_name, content_type, niche, va_name)
-            # telegram_bot.py owns the files now and cleans them up after approve/reject
+    if model_name in SLOT_CREATORS and approval_videos:
+        await telegram_bot.send_for_approval(approval_videos, model_name, content_type, niche, va_name)
+        # telegram_bot.py owns the files now and cleans them up after approve/reject
 
-        await telegram_bot.send_notifications(
-            model_name=model_name,
-            content_type=content_type,
-            date_str=date_str,
-            drive_links=[folder_link],
-        )
-
-    except Exception as e:
-        logger.error(f"FATAL error processing upload for {model_name}: {e}", exc_info=True)
-        await telegram_bot.send_error_notification(
-            f"Upload fehlgeschlagen für {model_name} / {content_type}: {type(e).__name__}: {e}"
-        )
+    await telegram_bot.send_notifications(
+        model_name=model_name,
+        content_type=content_type,
+        date_str=date_str,
+        drive_links=[folder_link],
+    )
 
 
 # ──────────────────────────────────────────────────────────────
@@ -370,6 +430,35 @@ async def admin_bulk_approve(request: Request, x_admin_secret: Optional[str] = H
     if not models:
         raise HTTPException(status_code=400, detail="models required")
     return await telegram_bot.bulk_approve(models)
+
+
+@app.get("/admin/failed_uploads")
+async def admin_list_failed(x_admin_secret: Optional[str] = Header(None)):
+    if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="forbidden")
+    items = []
+    for filename in _list_failed_uploads():
+        with open(os.path.join(FAILED_DIR, filename)) as f:
+            uploads = json.load(f)
+        items.append({
+            "file": filename,
+            "model": uploads[0].get("model", ""),
+            "content_type": uploads[0].get("content_type", ""),
+            "va_name": uploads[0].get("va_name", ""),
+            "files": [u.get("file_name") for u in uploads],
+        })
+    return {"failed": items}
+
+
+@app.post("/admin/retry_failed")
+async def admin_retry_failed(x_admin_secret: Optional[str] = Header(None)):
+    if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="forbidden")
+    results = {}
+    for filename in _list_failed_uploads():
+        error = await _retry_failed_upload(filename)
+        results[filename] = "ok" if error is None else error
+    return {"results": results}
 
 
 @app.get("/health")
