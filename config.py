@@ -54,8 +54,12 @@ NICHE_TOPICS = {
     ("Margaret Asian", "School Girl Reels"):    4,
     ("Margaret Asian", "Shell Reels"):          271,
     ("Margaret Asian", "Nurse Reels"):          272,
+    ("Margaret Asian", "Football Reels"):       1158,
+    ("Margaret Asian", "Interview Reels"):      1159,
     ("Yuki Chen",      "Snapchat Based Reels"): 269,
     ("Yuki Chen",      "School Girl Reels"):    2,
+    ("Yuki Chen",      "Football Reels"):       1160,
+    ("Yuki Chen",      "Interview Reels"):      1161,
 }
 
 # ──────────────────────────────────────────────
