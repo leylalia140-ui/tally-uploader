@@ -152,6 +152,28 @@ def is_image(file_name: str, mime_type: str) -> bool:
     return mime_type.lower() in _IMAGE_MIME_TYPES or ext in _IMAGE_EXTENSIONS
 
 
+INSTAGRAM_FEED_PICTURES_CONTENT_TYPE = "Instagram FEED PICTURES"
+
+
+async def _push_image_to_content_tracker(file_path: str, file_name: str, mime_type: str, creator: str) -> None:
+    if not settings.FB_CONTENT_TRACKER_INTERNAL_TOKEN:
+        logger.warning("FB_CONTENT_TRACKER_INTERNAL_TOKEN not set, skipping content tracker push")
+        return
+    try:
+        with open(file_path, "rb") as f:
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(
+                    f"{settings.FB_CONTENT_TRACKER_URL}/api/internal/upload-image",
+                    headers={"X-Internal-Token": settings.FB_CONTENT_TRACKER_INTERNAL_TOKEN},
+                    files={"files": (file_name, f, mime_type)},
+                    data={"creator": creator, "niche": INSTAGRAM_FEED_PICTURES_CONTENT_TYPE},
+                )
+                resp.raise_for_status()
+        logger.info(f"Pushed to FB Content Tracker: {file_name} ({creator})")
+    except Exception as e:
+        logger.error(f"Failed to push {file_name} to FB Content Tracker: {e}")
+
+
 # ──────────────────────────────────────────────────────────────
 # Video conversion
 # ──────────────────────────────────────────────────────────────
@@ -340,6 +362,9 @@ async def _process_uploads_core(uploads: list[dict]) -> None:
         except Exception:
             os.unlink(video_path)
             raise
+
+        if content_type == INSTAGRAM_FEED_PICTURES_CONTENT_TYPE and is_image(file_name, mime_type):
+            await _push_image_to_content_tracker(video_path, file_name, mime_type, model_name)
 
         if model_name in SLOT_CREATORS:
             sherry_needs_approval = (

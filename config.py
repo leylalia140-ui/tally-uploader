@@ -10,6 +10,10 @@ class Settings:
     ADMIN_SECRET: str = os.environ.get("ADMIN_SECRET", "")
     PORT: int = int(os.environ.get("PORT", "8000"))
     HOST: str = os.environ.get("HOST", "0.0.0.0")
+    FB_CONTENT_TRACKER_URL: str = os.environ.get(
+        "FB_CONTENT_TRACKER_URL", "https://fb-content-tracker-production.up.railway.app"
+    )
+    FB_CONTENT_TRACKER_INTERNAL_TOKEN: str = os.environ.get("FB_CONTENT_TRACKER_INTERNAL_TOKEN", "")
 
 
 settings = Settings()
