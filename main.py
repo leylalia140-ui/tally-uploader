@@ -314,6 +314,7 @@ async def _process_uploads_core(uploads: list[dict]) -> None:
 
     drive = GoogleDriveClient()
     folder_id = drive.resolve_folder_path(folder_path)
+    type_folder_ids: dict[str, str] = {}
 
     # Videos for Margaret Asian approval (file paths, not bytes)
     approval_videos = []
@@ -326,6 +327,11 @@ async def _process_uploads_core(uploads: list[dict]) -> None:
         if not file_url:
             logger.error(f"Missing file_url: {upload}")
             continue
+
+        type_folder_name = "Images" if is_image(file_name, mime_type) else "Videos"
+        if type_folder_name not in type_folder_ids:
+            type_folder_ids[type_folder_name] = drive.get_or_create_folder(type_folder_name, folder_id)
+        upload_folder_id = type_folder_ids[type_folder_name]
 
         logger.info(f"Processing: {model_name} / {content_type} / {date_str} — {file_name}")
         logger.info(f"Downloading: {file_url}")
@@ -355,7 +361,7 @@ async def _process_uploads_core(uploads: list[dict]) -> None:
                 drive.upload_file(
                     file_name=file_name,
                     file_stream=f,
-                    folder_id=folder_id,
+                    folder_id=upload_folder_id,
                     mime_type=mime_type,
                 )
             logger.info(f"Uploaded to Drive: {file_name}")
