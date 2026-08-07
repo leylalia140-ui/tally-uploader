@@ -89,12 +89,34 @@ VA_TELEGRAM_IDS = {
 }
 
 # ──────────────────────────────────────────────
-# Strike system — daily approval deadline
+# Strike system — daily deadlines
 # ──────────────────────────────────────────────
 BJARNE_TELEGRAM_ID = 8013986821  # = VA 5 chat_id above, same account (@bjarnefuchs)
 JEREMI_TELEGRAM_ID = 8371406259  # = VA 6 chat_id above, same account (@jeremi_snd) — only this ID may /removestrike
-STRIKE_GROUP_CHAT_ID = -5014530893  # "🚨 Bjarne Fuchs Strikes Tracking" group (Jeremi + Bjarne + bot)
-APPROVAL_DEADLINE_HOUR = 13  # Berlin time — videos created today must be approved/rejected by this hour
+
+PERSON_TELEGRAM_IDS = {
+    "bjarne": BJARNE_TELEGRAM_ID,
+    "ken": VA_TELEGRAM_IDS["Ken"],
+    "james": VA_TELEGRAM_IDS["James"],
+}
+PERSON_DISPLAY_NAMES = {"bjarne": "Bjarne", "ken": "Ken", "james": "James"}
+
+# ALL strikes (Bjarne/Ken/James, any reason) post into this one group — no per-person groups.
+STRIKE_GROUP_CHAT_ID = -5014530893  # "🚨 Bjarne Fuchs Strikes Tracking"
+
+DEADLINE_BUFFER_MINUTES = 15  # grace period added to every deadline below before a strike fires
+STRIKE_MONTHLY_DISPLAY_MAX = 3  # shown as "X/3" in messages — display only, no automatic consequence at 3
+
+# Bjarne: Full-AI-Content-Videos in the APPROVAL BOT group must be approved/rejected by this hour
+APPROVAL_DEADLINE_HOUR = 13
+
+# Activity-based deadlines: the person must send >=1 message into chat_id by deadline_hour (+buffer),
+# checked via activity_log.py (bot is admin in each of these 3 groups so it sees every message there).
+ACTIVITY_STRIKE_TASKS = [
+    {"person": "bjarne", "chat_id": -1002303192503, "deadline_hour": 23, "label": "Full AI Trends Research"},
+    {"person": "ken",    "chat_id": -1003746370573, "deadline_hour": 13, "label": "AI Reels Gen (Ken)"},
+    {"person": "james",  "chat_id": -1004439596787, "deadline_hour": 13, "label": "AI Reels Gen (James)"},
+]
 
 TELEGRAM_ROUTING = [
     {

@@ -7,7 +7,7 @@ import os
 import subprocess
 import tempfile
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 BERLIN = ZoneInfo("Europe/Berlin")
@@ -16,7 +16,10 @@ import httpx
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Header
 from typing import Optional
 
-from config import settings, SLOT_CREATORS, APPROVAL_DEADLINE_HOUR
+from config import (
+    settings, SLOT_CREATORS, APPROVAL_DEADLINE_HOUR, DEADLINE_BUFFER_MINUTES,
+    ACTIVITY_STRIKE_TASKS,
+)
 from drive import GoogleDriveClient
 import telegram_bot
 
@@ -279,29 +282,41 @@ async def _periodic_retry_loop() -> None:
             logger.error(f"Periodic retry loop error: {e}", exc_info=True)
 
 
-_last_strike_check_date: Optional[str] = None
+_STRIKE_CHECKS = [
+    {"key": "bjarne_approval", "hour": APPROVAL_DEADLINE_HOUR, "fn": lambda: telegram_bot.check_daily_approval_deadline()},
+] + [
+    {
+        "key": f"activity_{t['person']}_{t['chat_id']}",
+        "hour": t["deadline_hour"],
+        "fn": (lambda t=t: telegram_bot.check_activity_deadline(t["person"], t["chat_id"], t["label"])),
+    }
+    for t in ACTIVITY_STRIKE_TASKS
+]
+_last_checked_dates: dict[str, str] = {}
 
 
 async def _daily_strike_check_loop() -> None:
-    """Fires telegram_bot.check_daily_approval_deadline() once per day, the first
-    time the loop observes Berlin time at/after APPROVAL_DEADLINE_HOUR.
+    """Fires each strike check once per day, the first time the loop observes
+    Berlin time at/after that check's deadline_hour + DEADLINE_BUFFER_MINUTES.
     Skips the calendar day the feature first launched on (persisted on disk),
-    so shipping this after 13:00 doesn't immediately strike someone for a
-    deadline that already silently passed before the feature existed."""
-    global _last_strike_check_date
+    so shipping this after a deadline already passed doesn't immediately
+    strike someone for a deadline that missed before the feature existed."""
     launch_date = telegram_bot.strikes.get_or_create_launch_date()
     while True:
         await asyncio.sleep(5 * 60)
         try:
             now = datetime.now(BERLIN)
             today_str = now.strftime("%Y-%m-%d")
-            if (
-                now.hour >= APPROVAL_DEADLINE_HOUR
-                and today_str != launch_date
-                and _last_strike_check_date != today_str
-            ):
-                _last_strike_check_date = today_str
-                await telegram_bot.check_daily_approval_deadline()
+            if today_str == launch_date:
+                continue
+            for check in _STRIKE_CHECKS:
+                key = check["key"]
+                deadline_dt = now.replace(hour=check["hour"], minute=0, second=0, microsecond=0) + timedelta(
+                    minutes=DEADLINE_BUFFER_MINUTES
+                )
+                if now >= deadline_dt and _last_checked_dates.get(key) != today_str:
+                    _last_checked_dates[key] = today_str
+                    await check["fn"]()
         except Exception as e:
             logger.error(f"Daily strike check loop error: {e}", exc_info=True)
 
@@ -472,10 +487,13 @@ async def telegram_callback(request: Request):
                 f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/answerCallbackQuery",
                 json={"callback_query_id": cq["id"]},
             )
-    elif "message" in data and "reply_to_message" in data["message"]:
-        await telegram_bot.handle_reason_reply(data["message"])
-    elif "message" in data and (data["message"].get("text") or "").startswith("/"):
-        await telegram_bot.handle_command(data["message"])
+    elif "message" in data:
+        message = data["message"]
+        telegram_bot.maybe_record_activity(message)
+        if "reply_to_message" in message:
+            await telegram_bot.handle_reason_reply(message)
+        elif (message.get("text") or "").startswith("/"):
+            await telegram_bot.handle_command(message)
     return {"ok": True}
 
 

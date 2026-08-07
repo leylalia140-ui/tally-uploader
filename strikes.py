@@ -85,3 +85,15 @@ def current_month_strikes(person: str) -> list[dict]:
     month = datetime.now(BERLIN).strftime("%Y-%m")
     entries = _load().get(person, [])
     return [e for e in entries if e["date"].startswith(month) and not e["revoked"]]
+
+
+def to_eu_date(iso_date: str) -> str:
+    """'2026-08-08' -> '08.08.26' — dates are stored as ISO internally (sortable/filterable),
+    only converted to the European dotted format for display in messages."""
+    return datetime.strptime(iso_date, "%Y-%m-%d").strftime("%d.%m.%y")
+
+
+def parse_eu_date(eu_date: str) -> str:
+    """'08.08.26' -> '2026-08-08' — accepts the format users see in messages and type back
+    into /removestrike."""
+    return datetime.strptime(eu_date, "%d.%m.%y").strftime("%Y-%m-%d")

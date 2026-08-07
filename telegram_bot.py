@@ -9,11 +9,15 @@ from hydrogram import Client
 from config import (
     settings, TELEGRAM_ROUTING, VIDEO_DISTRIBUTION_TARGETS,
     SLOT_CREATORS, NICHE_TOPICS, AI_MODELS_REELS_CHAT_ID, SLOTS_PER_CREATOR,
-    VA_TELEGRAM_IDS, BJARNE_TELEGRAM_ID, JEREMI_TELEGRAM_ID, STRIKE_GROUP_CHAT_ID,
-    APPROVAL_DEADLINE_HOUR,
+    VA_TELEGRAM_IDS, JEREMI_TELEGRAM_ID, STRIKE_GROUP_CHAT_ID,
+    APPROVAL_DEADLINE_HOUR, PERSON_TELEGRAM_IDS, PERSON_DISPLAY_NAMES,
+    STRIKE_MONTHLY_DISPLAY_MAX, ACTIVITY_STRIKE_TASKS,
 )
 import approval_log
+import activity_log
 import strikes
+
+MONITORED_ACTIVITY_CHAT_IDS = {t["chat_id"] for t in ACTIVITY_STRIKE_TASKS}
 
 BERLIN = ZoneInfo("Europe/Berlin")
 APPROVAL_CHAT_ID = -1004259848545
@@ -545,50 +549,71 @@ async def send_notifications(
 
 
 # ──────────────────────────────────────────────
-# Strike system — 13:00 Berlin approval deadline
+# Strike system — daily deadlines (Approval-Bjarne, Activity-Bjarne/Ken/James)
+# All strikes, regardless of person/reason, post into the one STRIKE_GROUP_CHAT_ID.
 # ──────────────────────────────────────────────
 
+def maybe_record_activity(message: dict) -> None:
+    """If this message landed in one of the monitored 'must send something daily'
+    chats and wasn't sent by the bot itself, record it as today's activity."""
+    chat_id = message.get("chat", {}).get("id")
+    if chat_id in MONITORED_ACTIVITY_CHAT_IDS and not message.get("from", {}).get("is_bot"):
+        activity_log.record_activity(chat_id)
+
+
+async def _notify_strike(person: str, entry: dict, extra_dm_detail: str = "") -> None:
+    count = len(strikes.current_month_strikes(person))
+    date_eu = strikes.to_eu_date(entry["date"])
+    display_name = PERSON_DISPLAY_NAMES.get(person, person.capitalize())
+    person_id = PERSON_TELEGRAM_IDS.get(person)
+    count_line = f"Strikes diesen Monat: {count}/{STRIKE_MONTHLY_DISPLAY_MAX}"
+
+    dm_text = f"🚨 Strike ({date_eu})\n{entry['reason']}"
+    if extra_dm_detail:
+        dm_text += f"\n{extra_dm_detail}"
+    dm_text += f"\n\n{count_line}"
+
+    group_text = f"🔴 Strike — {display_name} — {date_eu}\nGrund: {entry['reason']}\n{count_line}"
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        if person_id:
+            await client.post(
+                f"{_telegram_api()}/sendMessage",
+                json={"chat_id": person_id, "text": dm_text},
+            )
+        await client.post(
+            f"{_telegram_api()}/sendMessage",
+            json={"chat_id": STRIKE_GROUP_CHAT_ID, "text": group_text},
+        )
+    logger.info(f"Strike given to {display_name} ({entry['date']}): {entry['reason']} — month total {count}")
+
+
 async def check_daily_approval_deadline() -> None:
-    """Called once daily (~13:00 Berlin). If any video uploaded in the last 24h
-    is still neither approved nor rejected, Bjarne gets one strike for the day."""
+    """Called once daily (~13:00 + buffer Berlin). If any video uploaded in the
+    last 24h is still neither approved nor rejected, Bjarne gets one strike."""
     unresolved = approval_log.unresolved_created_in_last_24h()
     if not unresolved:
         return
     if strikes.has_strike_today("bjarne"):
         return  # already struck today (e.g. loop re-fired after a restart)
 
-    entry = strikes.add_strike(
-        "bjarne",
-        f"{len(unresolved)} Video(s) nicht bis 13:00 Uhr approved/rejected",
-    )
-    count = len(strikes.current_month_strikes("bjarne"))
+    reason = f"{len(unresolved)} Video(s) nicht bis 13:00 Uhr approved/rejected"
+    entry = strikes.add_strike("bjarne", reason)
     files_list = "\n".join(f"• {e['model_name']} — {e['file_name']}" for e in unresolved)
+    await _notify_strike("bjarne", entry, extra_dm_detail=files_list)
 
-    async with httpx.AsyncClient(timeout=15) as client:
-        await client.post(
-            f"{_telegram_api()}/sendMessage",
-            json={
-                "chat_id": BJARNE_TELEGRAM_ID,
-                "text": (
-                    f"🚨 Strike ({entry['date']})\n"
-                    f"Du hast {len(unresolved)} Video(s) nicht bis 13:00 Uhr approved/rejected:\n"
-                    f"{files_list}\n\n"
-                    f"Strikes diesen Monat: {count}"
-                ),
-            },
-        )
-        await client.post(
-            f"{_telegram_api()}/sendMessage",
-            json={
-                "chat_id": STRIKE_GROUP_CHAT_ID,
-                "text": (
-                    f"🔴 Strike für Bjarne — {entry['date']}\n"
-                    f"Grund: {entry['reason']}\n"
-                    f"Strikes diesen Monat: {count}"
-                ),
-            },
-        )
-    logger.info(f"Strike given to Bjarne ({entry['date']}), {len(unresolved)} unresolved, month total {count}")
+
+async def check_activity_deadline(person: str, chat_id: int, label: str) -> None:
+    """Called once daily (~deadline_hour + buffer Berlin) for an activity-based task
+    (Ken/James AI Reels Gen, Bjarne's Trends research). Strikes if nothing was sent
+    into chat_id in the last 24h."""
+    if activity_log.has_activity_in_last_24h(chat_id):
+        return
+    if strikes.has_strike_today(person):
+        return
+
+    entry = strikes.add_strike(person, f"{label} — nichts geschickt")
+    await _notify_strike(person, entry)
 
 
 async def handle_command(message: dict) -> None:
@@ -617,11 +642,30 @@ async def handle_command(message: dict) -> None:
         await reply("❌ Nicht berechtigt.")
         return
 
-    date_arg = parts[1] if len(parts) > 1 else None
-    revoked = strikes.revoke_strike("bjarne", date_arg, revoked_by="Jeremi")
-    if not revoked:
-        await reply("⚠️ Kein offener Strike gefunden" + (f" für {date_arg}" if date_arg else " diesen Monat") + ".")
+    if len(parts) < 2 or parts[1].lower() not in PERSON_TELEGRAM_IDS:
+        await reply("Nutzung: /removestrike <bjarne|ken|james> [TT.MM.JJ]")
         return
 
-    count = len(strikes.current_month_strikes("bjarne"))
-    await reply(f"↩️ Strike vom {revoked['date']} zurückgezogen. Strikes diesen Monat: {count}")
+    person = parts[1].lower()
+    date_arg_eu = parts[2] if len(parts) > 2 else None
+    date_arg_iso = None
+    if date_arg_eu:
+        try:
+            date_arg_iso = strikes.parse_eu_date(date_arg_eu)
+        except ValueError:
+            await reply(f"⚠️ Datum \"{date_arg_eu}\" nicht erkannt — bitte im Format TT.MM.JJ (z.B. 08.08.26).")
+            return
+
+    revoked = strikes.revoke_strike(person, date_arg_iso, revoked_by="Jeremi")
+    if not revoked:
+        await reply(
+            f"⚠️ Kein offener Strike für {PERSON_DISPLAY_NAMES.get(person, person)} gefunden"
+            + (f" am {date_arg_eu}" if date_arg_eu else " diesen Monat") + "."
+        )
+        return
+
+    count = len(strikes.current_month_strikes(person))
+    await reply(
+        f"↩️ Strike vom {strikes.to_eu_date(revoked['date'])} für {PERSON_DISPLAY_NAMES.get(person, person)} zurückgezogen. "
+        f"Strikes diesen Monat: {count}/{STRIKE_MONTHLY_DISPLAY_MAX}"
+    )
