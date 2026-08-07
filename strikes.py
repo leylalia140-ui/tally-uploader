@@ -59,21 +59,24 @@ def revoke_strike(person: str, date_str: str | None, revoked_by: str) -> dict | 
     return target
 
 
-LAUNCH_DATE_PATH = "/data/strike_launch_date.txt"
+LAUNCH_AT_PATH = "/data/strike_launch_at.txt"
 
 
-def get_or_create_launch_date() -> str:
-    """The Berlin calendar date the strike feature first went live.
-    Persisted so restarts on the same day don't re-arm the skip, but the
-    skip also doesn't linger past that one day."""
-    if os.path.exists(LAUNCH_DATE_PATH):
-        with open(LAUNCH_DATE_PATH) as f:
-            return f.read().strip()
-    today = datetime.now(BERLIN).strftime("%Y-%m-%d")
-    os.makedirs(os.path.dirname(LAUNCH_DATE_PATH), exist_ok=True)
-    with open(LAUNCH_DATE_PATH, "w") as f:
-        f.write(today)
-    return today
+def get_or_create_launch_at() -> datetime:
+    """The exact moment the strike feature first went live, persisted so restarts
+    don't reset it. Used per-check (not per-day): a deadline occurrence whose
+    deadline+buffer was already in the past at this moment is skipped forever,
+    but any occurrence still upcoming at launch fires normally the same day —
+    e.g. deploying at 19:51 skips today's already-passed 13:00 check but still
+    lets tonight's 23:00/23:59 checks fire on schedule."""
+    if os.path.exists(LAUNCH_AT_PATH):
+        with open(LAUNCH_AT_PATH) as f:
+            return datetime.fromisoformat(f.read().strip())
+    now = datetime.now(BERLIN)
+    os.makedirs(os.path.dirname(LAUNCH_AT_PATH), exist_ok=True)
+    with open(LAUNCH_AT_PATH, "w") as f:
+        f.write(now.isoformat())
+    return now
 
 
 def has_strike_today(person: str) -> bool:

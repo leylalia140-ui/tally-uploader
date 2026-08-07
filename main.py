@@ -293,7 +293,11 @@ _STRIKE_CHECKS = [
     }
     for t in ACTIVITY_STRIKE_TASKS
 ]
-_last_checked_dates: dict[str, str] = {}
+# Set of "{check_key}:{anchor_date}" strings already fired (or pre-launch, never to fire).
+# Must be keyed per (check, anchor) pair, not just per check — two anchors (yesterday/today)
+# can be simultaneously due in the same tick, and sharing one "last checked" slot between
+# them made each overwrite the other's fired-marker, causing infinite re-firing every 5min.
+_fired_checks: set[str] = set()
 
 
 async def _daily_strike_check_loop() -> None:
@@ -303,31 +307,36 @@ async def _daily_strike_check_loop() -> None:
     Each tick re-evaluates both today's and yesterday's deadline for every check
     (not just today's) — necessary because a deadline like 23:59 + 15min buffer
     lands at 00:14 the *next* calendar day, so "today" at fire time is already
-    one day past the deadline it's evaluating. Keying `_last_checked_dates` by
-    the deadline's own calendar day (not the day it happens to fire on) keeps
-    each day's deadline checked exactly once regardless of where it lands.
+    one day past the deadline it's evaluating. Tracking each (check, anchor-day)
+    pair independently in `_fired_checks` keeps each day's deadline checked
+    exactly once regardless of which day it happens to fire on.
 
-    Skips the calendar day the feature first launched on (persisted on disk),
-    so shipping this after a deadline already passed doesn't immediately
-    strike someone for a deadline that missed before the feature existed."""
-    launch_date = telegram_bot.strikes.get_or_create_launch_date()
+    A deadline occurrence is skipped only if it had *already* passed (deadline +
+    buffer < launch moment) at the exact moment the feature first started —
+    not the whole calendar day. So deploying at e.g. 19:51 skips today's 13:00
+    check (already silently missed before the feature existed) but still lets
+    today's still-upcoming 23:00/23:59 checks fire normally tonight."""
+    launch_at = telegram_bot.strikes.get_or_create_launch_at()
     while True:
         await asyncio.sleep(5 * 60)
         try:
             now = datetime.now(BERLIN)
             for check in _STRIKE_CHECKS:
-                key = check["key"]
                 for days_back in (1, 0):
                     anchor = (now - timedelta(days=days_back)).date()
                     anchor_str = anchor.strftime("%Y-%m-%d")
-                    if anchor_str == launch_date:
+                    fire_key = f"{check['key']}:{anchor_str}"
+                    if fire_key in _fired_checks:
                         continue
                     deadline_dt = datetime(
                         anchor.year, anchor.month, anchor.day,
                         check["hour"], check["minute"], tzinfo=BERLIN,
                     ) + timedelta(minutes=DEADLINE_BUFFER_MINUTES)
-                    if now >= deadline_dt and _last_checked_dates.get(key) != anchor_str:
-                        _last_checked_dates[key] = anchor_str
+                    if deadline_dt < launch_at:
+                        _fired_checks.add(fire_key)  # already over before the feature existed — never fire
+                        continue
+                    if now >= deadline_dt:
+                        _fired_checks.add(fire_key)
                         await check["fn"]()
         except Exception as e:
             logger.error(f"Daily strike check loop error: {e}", exc_info=True)
