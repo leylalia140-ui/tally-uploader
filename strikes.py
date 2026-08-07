@@ -90,6 +90,28 @@ def current_month_strikes(person: str) -> list[dict]:
     return [e for e in entries if e["date"].startswith(month) and not e["revoked"]]
 
 
+def strikes_for_month(person: str, year_month: str) -> list[dict]:
+    """All entries (active + revoked) for a given 'YYYY-MM', used for the monthly report."""
+    entries = _load().get(person, [])
+    return [e for e in entries if e["date"].startswith(year_month)]
+
+
+LAST_REPORT_PATH = "/data/last_monthly_report.txt"
+
+
+def get_last_report_month() -> str | None:
+    if os.path.exists(LAST_REPORT_PATH):
+        with open(LAST_REPORT_PATH) as f:
+            return f.read().strip()
+    return None
+
+
+def set_last_report_month(year_month: str) -> None:
+    os.makedirs(os.path.dirname(LAST_REPORT_PATH), exist_ok=True)
+    with open(LAST_REPORT_PATH, "w") as f:
+        f.write(year_month)
+
+
 def to_eu_date(iso_date: str) -> str:
     """'2026-08-08' -> '08.08.26' — dates are stored as ISO internally (sortable/filterable),
     only converted to the European dotted format for display in messages."""

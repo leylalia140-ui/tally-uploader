@@ -673,3 +673,42 @@ async def handle_command(message: dict) -> None:
         f"↩️ Strike vom {strikes.to_eu_date(revoked['date'])} für {PERSON_DISPLAY_NAMES.get(person, person)} zurückgezogen. "
         f"Strikes diesen Monat: {count}/{STRIKE_MONTHLY_DISPLAY_MAX}"
     )
+
+
+async def send_monthly_report() -> None:
+    """DM to Jeremi only (no group post) — called once on the 1st of each month,
+    reporting the strike tally for the month that just ended."""
+    from datetime import datetime, timedelta
+
+    GERMAN_MONTHS = [
+        "Januar", "Februar", "März", "April", "Mai", "Juni",
+        "Juli", "August", "September", "Oktober", "November", "Dezember",
+    ]
+    now = datetime.now(BERLIN)
+    last_day_prev_month = now.replace(day=1) - timedelta(days=1)
+    year_month = last_day_prev_month.strftime("%Y-%m")
+    month_label = f"{GERMAN_MONTHS[last_day_prev_month.month - 1]} {last_day_prev_month.year}"
+
+    entries = strikes.strikes_for_month("bjarne", year_month)
+    active = [e for e in entries if not e["revoked"]]
+    revoked = [e for e in entries if e["revoked"]]
+
+    if active:
+        lines = "\n".join(f"• {strikes.to_eu_date(e['date'])} — {e['reason']}" for e in active)
+        body = f"Strikes: {len(active)}/{STRIKE_MONTHLY_DISPLAY_MAX}\n{lines}"
+    else:
+        body = "✅ Keine Strikes."
+    if revoked:
+        body += f"\n\n({len(revoked)} weitere zurückgezogen, zählen nicht mit)"
+
+    text = f"📊 Monatsbericht Bjarne — {month_label}\n\n{body}"
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(
+            f"{_telegram_api()}/sendMessage",
+            json={"chat_id": JEREMI_TELEGRAM_ID, "text": text},
+        )
+    if resp.status_code == 200:
+        logger.info(f"Monthly report sent for {year_month}: {len(active)} active, {len(revoked)} revoked")
+    else:
+        logger.warning(f"Monthly report send failed ({resp.status_code}): {resp.text}")

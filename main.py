@@ -50,6 +50,7 @@ async def startup_event():
         logger.info(f"Webhook set: {r.json().get('description', r.text)}")
     asyncio.create_task(_periodic_retry_loop())
     asyncio.create_task(_daily_strike_check_loop())
+    asyncio.create_task(_monthly_report_loop())
 
 
 # ──────────────────────────────────────────────────────────────
@@ -368,6 +369,25 @@ async def _daily_strike_check_loop() -> None:
                         await check["fn"]()
         except Exception as e:
             logger.error(f"Daily strike check loop error: {e}", exc_info=True)
+
+
+async def _monthly_report_loop() -> None:
+    """Sends telegram_bot.send_monthly_report() (DM to Jeremi, no group) once on
+    the 1st of each month, around 09:00 Berlin. Persists the last-reported month
+    to disk so a restart on the 1st doesn't send it twice."""
+    while True:
+        await asyncio.sleep(5 * 60)
+        try:
+            now = datetime.now(BERLIN)
+            if now.day != 1 or now.hour < 9:
+                continue
+            year_month = now.strftime("%Y-%m")
+            if telegram_bot.strikes.get_last_report_month() == year_month:
+                continue
+            telegram_bot.strikes.set_last_report_month(year_month)
+            await telegram_bot.send_monthly_report()
+        except Exception as e:
+            logger.error(f"Monthly report loop error: {e}", exc_info=True)
 
 
 async def _do_process_all_uploads(uploads: list[dict]) -> None:
