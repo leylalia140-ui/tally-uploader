@@ -113,9 +113,9 @@ APPROVAL_DEADLINE_HOUR = 13
 # Activity-based deadlines: the person must send >=1 message into chat_id by deadline_hour (+buffer),
 # checked via activity_log.py (bot is admin in each of these 3 groups so it sees every message there).
 ACTIVITY_STRIKE_TASKS = [
-    {"person": "bjarne", "chat_id": -1002303192503, "deadline_hour": 23, "label": "Full AI Trends Research"},
-    {"person": "ken",    "chat_id": -1003746370573, "deadline_hour": 13, "label": "AI Reels Gen (Ken)"},
-    {"person": "james",  "chat_id": -1004439596787, "deadline_hour": 13, "label": "AI Reels Gen (James)"},
+    {"person": "bjarne", "chat_id": -1002303192503, "deadline_hour": 23, "deadline_minute": 0,  "label": "Full AI Trends Research"},
+    {"person": "ken",    "chat_id": -1003746370573, "deadline_hour": 23, "deadline_minute": 59, "label": "AI Reels Gen (Ken)"},
+    {"person": "james",  "chat_id": -1004439596787, "deadline_hour": 23, "deadline_minute": 59, "label": "AI Reels Gen (James)"},
 ]
 
 TELEGRAM_ROUTING = [

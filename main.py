@@ -283,11 +283,12 @@ async def _periodic_retry_loop() -> None:
 
 
 _STRIKE_CHECKS = [
-    {"key": "bjarne_approval", "hour": APPROVAL_DEADLINE_HOUR, "fn": lambda: telegram_bot.check_daily_approval_deadline()},
+    {"key": "bjarne_approval", "hour": APPROVAL_DEADLINE_HOUR, "minute": 0, "fn": lambda: telegram_bot.check_daily_approval_deadline()},
 ] + [
     {
         "key": f"activity_{t['person']}_{t['chat_id']}",
         "hour": t["deadline_hour"],
+        "minute": t.get("deadline_minute", 0),
         "fn": (lambda t=t: telegram_bot.check_activity_deadline(t["person"], t["chat_id"], t["label"])),
     }
     for t in ACTIVITY_STRIKE_TASKS
@@ -297,7 +298,15 @@ _last_checked_dates: dict[str, str] = {}
 
 async def _daily_strike_check_loop() -> None:
     """Fires each strike check once per day, the first time the loop observes
-    Berlin time at/after that check's deadline_hour + DEADLINE_BUFFER_MINUTES.
+    Berlin time at/after that check's deadline (hour:minute) + DEADLINE_BUFFER_MINUTES.
+
+    Each tick re-evaluates both today's and yesterday's deadline for every check
+    (not just today's) — necessary because a deadline like 23:59 + 15min buffer
+    lands at 00:14 the *next* calendar day, so "today" at fire time is already
+    one day past the deadline it's evaluating. Keying `_last_checked_dates` by
+    the deadline's own calendar day (not the day it happens to fire on) keeps
+    each day's deadline checked exactly once regardless of where it lands.
+
     Skips the calendar day the feature first launched on (persisted on disk),
     so shipping this after a deadline already passed doesn't immediately
     strike someone for a deadline that missed before the feature existed."""
@@ -306,17 +315,20 @@ async def _daily_strike_check_loop() -> None:
         await asyncio.sleep(5 * 60)
         try:
             now = datetime.now(BERLIN)
-            today_str = now.strftime("%Y-%m-%d")
-            if today_str == launch_date:
-                continue
             for check in _STRIKE_CHECKS:
                 key = check["key"]
-                deadline_dt = now.replace(hour=check["hour"], minute=0, second=0, microsecond=0) + timedelta(
-                    minutes=DEADLINE_BUFFER_MINUTES
-                )
-                if now >= deadline_dt and _last_checked_dates.get(key) != today_str:
-                    _last_checked_dates[key] = today_str
-                    await check["fn"]()
+                for days_back in (1, 0):
+                    anchor = (now - timedelta(days=days_back)).date()
+                    anchor_str = anchor.strftime("%Y-%m-%d")
+                    if anchor_str == launch_date:
+                        continue
+                    deadline_dt = datetime(
+                        anchor.year, anchor.month, anchor.day,
+                        check["hour"], check["minute"], tzinfo=BERLIN,
+                    ) + timedelta(minutes=DEADLINE_BUFFER_MINUTES)
+                    if now >= deadline_dt and _last_checked_dates.get(key) != anchor_str:
+                        _last_checked_dates[key] = anchor_str
+                        await check["fn"]()
         except Exception as e:
             logger.error(f"Daily strike check loop error: {e}", exc_info=True)
 
