@@ -122,10 +122,6 @@ NOTION_TASKS_DB_ID = "1ad54236-70f0-80dc-9e10-ca3339419e09"
 # for tasks that don't recur every day (Sherry's list is every 3 days).
 ACTIVITY_STRIKE_TASKS = [
     {
-        "chat_id": -1002303192503, "label": "Full AI Trends Research",
-        "deadline_hour": 23, "deadline_minute": 0, "window_hours": 24,
-    },
-    {
         "chat_id": -1003746370573, "label": "AI Reels Gen (Ken)",
         "deadline_hour": 23, "deadline_minute": 59, "window_hours": 24,
     },
