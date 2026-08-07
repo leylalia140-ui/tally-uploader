@@ -88,6 +88,14 @@ VA_TELEGRAM_IDS = {
     "James": 5512507496,
 }
 
+# ──────────────────────────────────────────────
+# Strike system — daily approval deadline
+# ──────────────────────────────────────────────
+BJARNE_TELEGRAM_ID = 8013986821  # = VA 5 chat_id above, same account (@bjarnefuchs)
+JEREMI_TELEGRAM_ID = 8371406259  # = VA 6 chat_id above, same account (@jeremi_snd) — only this ID may /removestrike
+STRIKE_GROUP_CHAT_ID = -5014530893  # "🚨 Strikes" group (Jeremi + Bjarne + bot)
+APPROVAL_DEADLINE_HOUR = 13  # Berlin time — videos created today must be approved/rejected by this hour
+
 TELEGRAM_ROUTING = [
     {
         "name": "VA 6",

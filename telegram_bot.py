@@ -9,8 +9,11 @@ from hydrogram import Client
 from config import (
     settings, TELEGRAM_ROUTING, VIDEO_DISTRIBUTION_TARGETS,
     SLOT_CREATORS, NICHE_TOPICS, AI_MODELS_REELS_CHAT_ID, SLOTS_PER_CREATOR,
-    VA_TELEGRAM_IDS,
+    VA_TELEGRAM_IDS, BJARNE_TELEGRAM_ID, JEREMI_TELEGRAM_ID, STRIKE_GROUP_CHAT_ID,
+    APPROVAL_DEADLINE_HOUR,
 )
+import approval_log
+import strikes
 
 BERLIN = ZoneInfo("Europe/Berlin")
 APPROVAL_CHAT_ID = -1004259848545
@@ -189,6 +192,7 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
                     "behave_target": behave_target,
                     "va_name": va_name,
                 }
+                approval_log.log_created(token, model_name, video["file_name"], va_name)
 
                 # 1. Send file as .mp4 document via Hydrogram (directly from disk)
                 try:
@@ -273,6 +277,7 @@ async def handle_callback(cq: dict) -> None:
             pass
         PENDING_APPROVALS[token] = {k: v for k, v in rejected.items()
                                      if k not in ("rejected_at", "chat_id", "message_id")}
+        approval_log.set_resolved(token, False)
         slots_text = " | ".join(f"Account {s}" for s in rejected.get("slots", []))
         va_line = f"👤 {rejected['va_name']}\n" if rejected.get("va_name") else ""
         caption = (
@@ -294,6 +299,7 @@ async def handle_callback(cq: dict) -> None:
     pending = PENDING_APPROVALS.pop(token)
 
     if action == "approve":
+        approval_log.set_resolved(token, True)
         slots_text = " | ".join(f"Account {s}" for s in pending.get("slots", []))
         await _edit_caption(chat_id, message_id,
             f"⏳ Wird gesendet → AI Models Reels ({pending['model_name']})…")
@@ -301,6 +307,7 @@ async def handle_callback(cq: dict) -> None:
         await _edit_caption(chat_id, message_id,
             f"✅ Gesendet → {pending['model_name']}\n📌 {slots_text}\n📁 {pending['file_name']}")
     elif action == "reject":
+        approval_log.set_resolved(token, True)
         file_path = pending.get("file_path", "")
         # Remove hash so the video can be re-uploaded via Tally without duplicate warning
         if file_path and os.path.exists(file_path):
@@ -458,6 +465,7 @@ async def bulk_approve(model_names: list[str]) -> dict:
         pending = PENDING_APPROVALS.pop(token, None)
         if not pending:
             continue
+        approval_log.set_resolved(token, True)
         await _send_approved_video(pending)
         approved.append({"model_name": pending["model_name"], "file_name": pending["file_name"]})
     return {"approved_count": len(approved), "approved": approved}
@@ -534,3 +542,86 @@ async def send_notifications(
                     )
             except Exception as e:
                 logger.error(f"Error notifying {va['name']}: {e}")
+
+
+# ──────────────────────────────────────────────
+# Strike system — 13:00 Berlin approval deadline
+# ──────────────────────────────────────────────
+
+async def check_daily_approval_deadline() -> None:
+    """Called once daily (~13:00 Berlin). If any video uploaded in the last 24h
+    is still neither approved nor rejected, Bjarne gets one strike for the day."""
+    unresolved = approval_log.unresolved_created_in_last_24h()
+    if not unresolved:
+        return
+    if strikes.has_strike_today("bjarne"):
+        return  # already struck today (e.g. loop re-fired after a restart)
+
+    entry = strikes.add_strike(
+        "bjarne",
+        f"{len(unresolved)} Video(s) nicht bis 13:00 Uhr approved/rejected",
+    )
+    count = len(strikes.current_month_strikes("bjarne"))
+    files_list = "\n".join(f"• {e['model_name']} — {e['file_name']}" for e in unresolved)
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        await client.post(
+            f"{_telegram_api()}/sendMessage",
+            json={
+                "chat_id": BJARNE_TELEGRAM_ID,
+                "text": (
+                    f"🚨 Strike ({entry['date']})\n"
+                    f"Du hast {len(unresolved)} Video(s) nicht bis 13:00 Uhr approved/rejected:\n"
+                    f"{files_list}\n\n"
+                    f"Strikes diesen Monat: {count}"
+                ),
+            },
+        )
+        await client.post(
+            f"{_telegram_api()}/sendMessage",
+            json={
+                "chat_id": STRIKE_GROUP_CHAT_ID,
+                "text": (
+                    f"🔴 Strike für Bjarne — {entry['date']}\n"
+                    f"Grund: {entry['reason']}\n"
+                    f"Strikes diesen Monat: {count}"
+                ),
+            },
+        )
+    logger.info(f"Strike given to Bjarne ({entry['date']}), {len(unresolved)} unresolved, month total {count}")
+
+
+async def handle_command(message: dict) -> None:
+    """Handle plain-text bot commands (e.g. /removestrike), sent as DM or in the strike group."""
+    text = (message.get("text") or "").strip()
+    if not text.startswith("/"):
+        return
+    from_id = message.get("from", {}).get("id")
+    chat_id = message.get("chat", {}).get("id")
+    thread_id = message.get("message_thread_id")
+
+    parts = text.split()
+    command = parts[0].split("@")[0]  # strip @BotUsername suffix if present
+
+    if command != "/removestrike":
+        return
+
+    async def reply(msg: str) -> None:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(
+                f"{_telegram_api()}/sendMessage",
+                json={"chat_id": chat_id, "message_thread_id": thread_id, "text": msg},
+            )
+
+    if from_id != JEREMI_TELEGRAM_ID:
+        await reply("❌ Nicht berechtigt.")
+        return
+
+    date_arg = parts[1] if len(parts) > 1 else None
+    revoked = strikes.revoke_strike("bjarne", date_arg, revoked_by="Jeremi")
+    if not revoked:
+        await reply("⚠️ Kein offener Strike gefunden" + (f" für {date_arg}" if date_arg else " diesen Monat") + ".")
+        return
+
+    count = len(strikes.current_month_strikes("bjarne"))
+    await reply(f"↩️ Strike vom {revoked['date']} zurückgezogen. Strikes diesen Monat: {count}")

@@ -16,7 +16,7 @@ import httpx
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Header
 from typing import Optional
 
-from config import settings, SLOT_CREATORS
+from config import settings, SLOT_CREATORS, APPROVAL_DEADLINE_HOUR
 from drive import GoogleDriveClient
 import telegram_bot
 
@@ -44,6 +44,7 @@ async def startup_event():
         )
         logger.info(f"Webhook set: {r.json().get('description', r.text)}")
     asyncio.create_task(_periodic_retry_loop())
+    asyncio.create_task(_daily_strike_check_loop())
 
 
 # ──────────────────────────────────────────────────────────────
@@ -278,6 +279,33 @@ async def _periodic_retry_loop() -> None:
             logger.error(f"Periodic retry loop error: {e}", exc_info=True)
 
 
+_last_strike_check_date: Optional[str] = None
+
+
+async def _daily_strike_check_loop() -> None:
+    """Fires telegram_bot.check_daily_approval_deadline() once per day, the first
+    time the loop observes Berlin time at/after APPROVAL_DEADLINE_HOUR.
+    Skips the calendar day the feature first launched on (persisted on disk),
+    so shipping this after 13:00 doesn't immediately strike someone for a
+    deadline that already silently passed before the feature existed."""
+    global _last_strike_check_date
+    launch_date = telegram_bot.strikes.get_or_create_launch_date()
+    while True:
+        await asyncio.sleep(5 * 60)
+        try:
+            now = datetime.now(BERLIN)
+            today_str = now.strftime("%Y-%m-%d")
+            if (
+                now.hour >= APPROVAL_DEADLINE_HOUR
+                and today_str != launch_date
+                and _last_strike_check_date != today_str
+            ):
+                _last_strike_check_date = today_str
+                await telegram_bot.check_daily_approval_deadline()
+        except Exception as e:
+            logger.error(f"Daily strike check loop error: {e}", exc_info=True)
+
+
 async def _do_process_all_uploads(uploads: list[dict]) -> None:
     model_name = uploads[0].get("model", "").strip()
     content_type = uploads[0].get("content_type", "").strip()
@@ -446,6 +474,8 @@ async def telegram_callback(request: Request):
             )
     elif "message" in data and "reply_to_message" in data["message"]:
         await telegram_bot.handle_reason_reply(data["message"])
+    elif "message" in data and (data["message"].get("text") or "").startswith("/"):
+        await telegram_bot.handle_command(data["message"])
     return {"ok": True}
 
 
