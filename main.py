@@ -18,9 +18,10 @@ from typing import Optional
 
 from config import (
     settings, SLOT_CREATORS, APPROVAL_DEADLINE_HOUR, DEADLINE_BUFFER_MINUTES,
-    ACTIVITY_STRIKE_TASKS,
+    ACTIVITY_STRIKE_TASKS, SHERRY_LIST_NOTION_TASK_TITLE, SHERRY_LIST_NOTION_ASSIGNED_TO,
+    SHERRY_LIST_CHAT_ID, SHERRY_LIST_WINDOW_HOURS,
 )
-# notion_tasks + SHERRY_LIST_* not imported yet — see note below _STRIKE_CHECKS.
+import notion_tasks
 from drive import GoogleDriveClient
 import telegram_bot
 
@@ -294,10 +295,21 @@ _STRIKE_CHECKS = [
     }
     for t in ACTIVITY_STRIKE_TASKS
 ]
-# Sherry-list check (Notion-gated, resolve_time) intentionally NOT wired in yet —
-# Notion shows that task assigned to "Sherry", not "Bjarne", contradicting the
-# "only Bjarne's own activity counts" rule confirmed for every other check here.
-# Holding off until that's clarified; see notion_tasks.py for the lookup helper.
+_STRIKE_CHECKS.append({
+    "key": "activity_sherry_list",
+    # No static hour/minute — resolve_time asks Notion whether `anchor` is even a due
+    # day at all (Sherry's list is every 3 days, not daily), and if so what time it's
+    # due. The Notion record is assigned to Sherry (used only to find the schedule) —
+    # the actual strike check still watches Bjarne's own activity in the chat, same
+    # as every other check.
+    "resolve_time": (lambda anchor: notion_tasks.get_deadline_for_date(
+        SHERRY_LIST_NOTION_TASK_TITLE, SHERRY_LIST_NOTION_ASSIGNED_TO, anchor
+    )),
+    "fn": (lambda: telegram_bot.check_activity_deadline(
+        "bjarne", SHERRY_LIST_CHAT_ID, "Sherry Reels Liste", SHERRY_LIST_WINDOW_HOURS
+    )),
+})
+
 # Set of "{check_key}:{anchor_date}" strings already fired (or pre-launch, never to fire).
 # Must be keyed per (check, anchor) pair, not just per check — two anchors (yesterday/today)
 # can be simultaneously due in the same tick, and sharing one "last checked" slot between

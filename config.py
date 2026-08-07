@@ -138,7 +138,11 @@ ACTIVITY_STRIKE_TASKS = [
 # Notion-gated activity task: only checked on days Notion actually lists a due task for
 # this title+assignee — deadline time is read live from that Notion entry, not hardcoded.
 SHERRY_LIST_NOTION_TASK_TITLE = "Instagram Reels Liste Sherry"
-SHERRY_LIST_NOTION_ASSIGNED_TO = "Bjarne"
+# The Notion task itself is assigned to "Sherry" (used only to find the due-day + deadline
+# time) — but the actual strike check still watches BJARNE's activity in the chat, same as
+# every other check. Notion's assignee here doesn't change who the strike system holds
+# accountable, it's just which Notion record to read the schedule from.
+SHERRY_LIST_NOTION_ASSIGNED_TO = "Sherry"
 SHERRY_LIST_CHAT_ID = -1002303192503  # same "Instagram Reels Trends - Sherry" group
 SHERRY_LIST_WINDOW_HOURS = 72  # 3-day cadence
 
