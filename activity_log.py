@@ -34,9 +34,9 @@ def record_activity(chat_id: int) -> None:
     _save(data)
 
 
-def has_activity_in_last_24h(chat_id: int) -> bool:
+def has_activity_in_last_hours(chat_id: int, hours: int = 24) -> bool:
     last = _load().get(str(chat_id))
     if not last:
         return False
-    cutoff = (datetime.now(BERLIN) - timedelta(hours=24)).isoformat()
+    cutoff = (datetime.now(BERLIN) - timedelta(hours=hours)).isoformat()
     return last >= cutoff

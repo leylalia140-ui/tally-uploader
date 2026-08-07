@@ -20,6 +20,7 @@ from config import (
     settings, SLOT_CREATORS, APPROVAL_DEADLINE_HOUR, DEADLINE_BUFFER_MINUTES,
     ACTIVITY_STRIKE_TASKS,
 )
+# notion_tasks + SHERRY_LIST_* not imported yet — see note below _STRIKE_CHECKS.
 from drive import GoogleDriveClient
 import telegram_bot
 
@@ -286,13 +287,17 @@ _STRIKE_CHECKS = [
     {"key": "bjarne_approval", "hour": APPROVAL_DEADLINE_HOUR, "minute": 0, "fn": lambda: telegram_bot.check_daily_approval_deadline()},
 ] + [
     {
-        "key": f"activity_{t['person']}_{t['chat_id']}",
+        "key": f"activity_{t['chat_id']}_{t['deadline_hour']}{t['deadline_minute']}",
         "hour": t["deadline_hour"],
-        "minute": t.get("deadline_minute", 0),
-        "fn": (lambda t=t: telegram_bot.check_activity_deadline(t["person"], t["chat_id"], t["label"])),
+        "minute": t["deadline_minute"],
+        "fn": (lambda t=t: telegram_bot.check_activity_deadline("bjarne", t["chat_id"], t["label"], t["window_hours"])),
     }
     for t in ACTIVITY_STRIKE_TASKS
 ]
+# Sherry-list check (Notion-gated, resolve_time) intentionally NOT wired in yet —
+# Notion shows that task assigned to "Sherry", not "Bjarne", contradicting the
+# "only Bjarne's own activity counts" rule confirmed for every other check here.
+# Holding off until that's clarified; see notion_tasks.py for the lookup helper.
 # Set of "{check_key}:{anchor_date}" strings already fired (or pre-launch, never to fire).
 # Must be keyed per (check, anchor) pair, not just per check — two anchors (yesterday/today)
 # can be simultaneously due in the same tick, and sharing one "last checked" slot between
@@ -328,9 +333,20 @@ async def _daily_strike_check_loop() -> None:
                     fire_key = f"{check['key']}:{anchor_str}"
                     if fire_key in _fired_checks:
                         continue
+                    if "resolve_time" in check:
+                        # Notion-gated check: ask whether `anchor` is even a due day at all,
+                        # and if so what time it's due — re-asked every tick until resolved,
+                        # since it can't be known ahead of time like a static hour/minute.
+                        resolved = await check["resolve_time"](anchor)
+                        if resolved is None:
+                            _fired_checks.add(fire_key)  # not a due day — never check this anchor again
+                            continue
+                        hour, minute = resolved
+                    else:
+                        hour, minute = check["hour"], check["minute"]
                     deadline_dt = datetime(
                         anchor.year, anchor.month, anchor.day,
-                        check["hour"], check["minute"], tzinfo=BERLIN,
+                        hour, minute, tzinfo=BERLIN,
                     ) + timedelta(minutes=DEADLINE_BUFFER_MINUTES)
                     if deadline_dt < launch_at:
                         _fired_checks.add(fire_key)  # already over before the feature existed — never fire

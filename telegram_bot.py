@@ -554,10 +554,13 @@ async def send_notifications(
 # ──────────────────────────────────────────────
 
 def maybe_record_activity(message: dict) -> None:
-    """If this message landed in one of the monitored 'must send something daily'
-    chats and wasn't sent by the bot itself, record it as today's activity."""
+    """If this message landed in one of the monitored groups AND was sent by
+    Bjarne specifically, record it as his activity there. Other members of
+    these groups (e.g. Ken/James/Sherry, who own or also post in some of them)
+    are deliberately ignored — this tracks only whether Bjarne did his part."""
     chat_id = message.get("chat", {}).get("id")
-    if chat_id in MONITORED_ACTIVITY_CHAT_IDS and not message.get("from", {}).get("is_bot"):
+    sender_id = message.get("from", {}).get("id")
+    if chat_id in MONITORED_ACTIVITY_CHAT_IDS and sender_id == PERSON_TELEGRAM_IDS["bjarne"]:
         activity_log.record_activity(chat_id)
 
 
@@ -603,11 +606,12 @@ async def check_daily_approval_deadline() -> None:
     await _notify_strike("bjarne", entry, extra_dm_detail=files_list)
 
 
-async def check_activity_deadline(person: str, chat_id: int, label: str) -> None:
-    """Called once daily (~deadline_hour + buffer Berlin) for an activity-based task
-    (Ken/James AI Reels Gen, Bjarne's Trends research). Strikes if nothing was sent
-    into chat_id in the last 24h."""
-    if activity_log.has_activity_in_last_24h(chat_id):
+async def check_activity_deadline(person: str, chat_id: int, label: str, window_hours: int = 24) -> None:
+    """Called once per due-day (~deadline + buffer Berlin) for an activity-based
+    task (Bjarne posting into the Ken/James AI Reels Gen groups, the Trends
+    research group, Sherry's list group). Strikes if Bjarne sent nothing into
+    chat_id within the last `window_hours`."""
+    if activity_log.has_activity_in_last_hours(chat_id, window_hours):
         return
     if strikes.has_strike_today(person):
         return
