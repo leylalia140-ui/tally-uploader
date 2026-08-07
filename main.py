@@ -372,15 +372,12 @@ async def _process_uploads_core(uploads: list[dict]) -> None:
         if content_type == INSTAGRAM_FEED_PICTURES_CONTENT_TYPE and is_image(file_name, mime_type):
             await _push_image_to_content_tracker(video_path, file_name, mime_type, model_name)
 
-        if model_name in SLOT_CREATORS and not is_image(file_name, mime_type):
-            sherry_needs_approval = (
-                model_name == "Sherry Hicks"
-                and content_type in ("Instagram Reels", "Full AI Content")
-            )
-            if model_name != "Sherry Hicks" or sherry_needs_approval:
-                approval_videos.append({"file_name": file_name, "path": video_path})
-            else:
-                os.unlink(video_path)
+        if (
+            model_name in SLOT_CREATORS
+            and not is_image(file_name, mime_type)
+            and content_type == "Full AI Content"
+        ):
+            approval_videos.append({"file_name": file_name, "path": video_path})
         else:
             os.unlink(video_path)
 
