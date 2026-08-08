@@ -165,7 +165,15 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
     api_id = int(os.environ.get("TG_API_ID", 0))
     api_hash = os.environ.get("TG_API_HASH", "")
 
-    async with Client("uploader", api_id=api_id, api_hash=api_hash, session_string=session_string) as app:
+    app = Client("uploader", api_id=api_id, api_hash=api_hash, session_string=session_string)
+    try:
+        await app.start()
+    except Exception as e:
+        logger.error(f"TG_SESSION connect failed in send_for_approval: {e}")
+        await send_error_notification(f"Telegram-Session (TG_SESSION) ist tot — Videos für Approval konnten nicht gesendet werden: {e}")
+        return
+
+    try:
         try:
             await app.get_chat(APPROVAL_CHAT_ID)
         except Exception as e:
@@ -211,6 +219,7 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
                     logger.info(f"Sent file for approval: {video['file_name']}")
                 except Exception as e:
                     logger.error(f"Error sending approval file: {e}")
+                    await send_error_notification(f"Video konnte nicht ins Approval gesendet werden ({video['file_name']}): {e}")
 
                 # 2. Send buttons message via Bot API
                 dup_prefix = "⚠️ Duplikat!\n" if is_dup else ""
@@ -237,6 +246,8 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
                 )
                 if resp.status_code != 200:
                     logger.warning(f"Buttons send failed: {resp.text}")
+    finally:
+        await app.stop()
 
 
 async def _edit_caption_with_buttons(chat_id: int, message_id: int, text: str, keyboard: list) -> None:
@@ -308,9 +319,14 @@ async def handle_callback(cq: dict) -> None:
         slots_text = " | ".join(f"Account {s}" for s in pending.get("slots", []))
         await _edit_caption(chat_id, message_id,
             f"⏳ Wird gesendet → AI Models Reels ({pending['model_name']})…")
-        await _send_approved_video(pending)
-        await _edit_caption(chat_id, message_id,
-            f"✅ Gesendet → {pending['model_name']}\n📌 {slots_text}\n📁 {pending['file_name']}")
+        sent_ok = await _send_approved_video(pending)
+        if sent_ok:
+            await _edit_caption(chat_id, message_id,
+                f"✅ Gesendet → {pending['model_name']}\n📌 {slots_text}\n📁 {pending['file_name']}")
+        else:
+            await _edit_caption(chat_id, message_id,
+                f"⚠️ FEHLER beim Senden → {pending['model_name']}\n📁 {pending['file_name']}\n"
+                f"Video ist verloren, bitte über Tally erneut hochladen. Jeremi wurde benachrichtigt.")
     elif action == "reject":
         approval_log.set_resolved(token, True)
         file_path = pending.get("file_path", "")
@@ -418,8 +434,11 @@ async def _edit_caption(chat_id: int, message_id: int, text: str) -> None:
         )
 
 
-async def _send_approved_video(pending: dict) -> None:
-    """Send approved video to AI Models Reels topic (+ Behave x Amin for Margaret). Deletes temp file after."""
+async def _send_approved_video(pending: dict) -> bool:
+    """Send approved video to AI Models Reels topic (+ Behave x Amin for Margaret).
+    Deletes temp file after, regardless of outcome. Returns True on success, False on
+    failure (e.g. dead TG_SESSION) — callers must check this and NOT tell Bjarne
+    "sent" when it actually failed."""
     file_path = pending["file_path"]
     slots_caption = (
         "📌 Post on: " + " | ".join(f"Account {s}" for s in pending.get("slots", [])) + "\n"
@@ -429,8 +448,9 @@ async def _send_approved_video(pending: dict) -> None:
     api_id = int(os.environ.get("TG_API_ID", 0))
     api_hash = os.environ.get("TG_API_HASH", "")
 
-    async with Client("uploader", api_id=api_id, api_hash=api_hash, session_string=session_string) as app:
-        try:
+    success = False
+    try:
+        async with Client("uploader", api_id=api_id, api_hash=api_hash, session_string=session_string) as app:
             # 1. Send to AI Models Reels (creator-specific topic)
             await app.send_document(
                 chat_id=AI_MODELS_REELS_CHAT_ID,
@@ -453,11 +473,17 @@ async def _send_approved_video(pending: dict) -> None:
                     force_document=True,
                 )
                 logger.info(f"Also sent to Behave x Amin thread {bt['thread_id']}")
-        except Exception as e:
-            logger.error(f"Error sending approved video: {e}")
-        finally:
-            if os.path.exists(file_path):
-                os.unlink(file_path)
+            success = True
+    except Exception as e:
+        logger.error(f"Error sending approved video: {e}")
+        await send_error_notification(
+            f"Approved Video konnte NICHT gesendet werden ({pending['file_name']}, {pending['model_name']}) "
+            f"— TG_SESSION evtl. abgelaufen: {e}"
+        )
+    finally:
+        if os.path.exists(file_path):
+            os.unlink(file_path)
+    return success
 
 
 async def bulk_approve(model_names: list[str]) -> dict:
@@ -466,14 +492,16 @@ async def bulk_approve(model_names: list[str]) -> dict:
     approval-group messages (those buttons will just show 'session expired' if pressed later)."""
     tokens = [t for t, p in list(PENDING_APPROVALS.items()) if p["model_name"] in model_names]
     approved = []
+    failed = []
     for token in tokens:
         pending = PENDING_APPROVALS.pop(token, None)
         if not pending:
             continue
         approval_log.set_resolved(token, True)
-        await _send_approved_video(pending)
-        approved.append({"model_name": pending["model_name"], "file_name": pending["file_name"]})
-    return {"approved_count": len(approved), "approved": approved}
+        sent_ok = await _send_approved_video(pending)
+        entry = {"model_name": pending["model_name"], "file_name": pending["file_name"]}
+        (approved if sent_ok else failed).append(entry)
+    return {"approved_count": len(approved), "approved": approved, "failed": failed}
 
 
 async def distribute_videos(videos: list[dict]) -> None:
