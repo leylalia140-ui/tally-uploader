@@ -417,8 +417,12 @@ async def _process_uploads_core(uploads: list[dict]) -> None:
         folder_subfolder = "edited"
     folder_path = ["Models", model_name, content_type, folder_subfolder, date_str]
 
-    drive = GoogleDriveClient()
-    folder_id = drive.resolve_folder_path(folder_path)
+    # GoogleDriveClient is fully synchronous/blocking — every call below runs via
+    # asyncio.to_thread so a slow/hung Drive API response can never freeze the
+    # whole process (it already did once: an admin script blocked everything,
+    # including Bjarne's approve/reject webhooks, for several minutes).
+    drive = await asyncio.to_thread(GoogleDriveClient)
+    folder_id = await asyncio.to_thread(drive.resolve_folder_path, folder_path)
     type_folder_ids: dict[str, str] = {}
 
     # Videos for Margaret Asian approval (file paths, not bytes)
@@ -435,7 +439,9 @@ async def _process_uploads_core(uploads: list[dict]) -> None:
 
         type_folder_name = "Images" if is_image(file_name, mime_type) else "Videos"
         if type_folder_name not in type_folder_ids:
-            type_folder_ids[type_folder_name] = drive.get_or_create_folder(type_folder_name, folder_id)
+            type_folder_ids[type_folder_name] = await asyncio.to_thread(
+                drive.get_or_create_folder, type_folder_name, folder_id
+            )
         upload_folder_id = type_folder_ids[type_folder_name]
 
         logger.info(f"Processing: {model_name} / {content_type} / {date_str} — {file_name}")
@@ -463,7 +469,8 @@ async def _process_uploads_core(uploads: list[dict]) -> None:
 
         try:
             with open(video_path, "rb") as f:
-                drive.upload_file(
+                await asyncio.to_thread(
+                    drive.upload_file,
                     file_name=file_name,
                     file_stream=f,
                     folder_id=upload_folder_id,
@@ -486,7 +493,7 @@ async def _process_uploads_core(uploads: list[dict]) -> None:
         else:
             os.unlink(video_path)
 
-    folder_link = drive.make_folder_public(folder_id)
+    folder_link = await asyncio.to_thread(drive.make_folder_public, folder_id)
     logger.info(f"Folder link: {folder_link}")
 
     if model_name in SLOT_CREATORS and approval_videos:
@@ -627,16 +634,24 @@ async def admin_resend_legacy_unresolved(x_admin_secret: Optional[str] = Header(
         niche = _RESEND_NICHE_MAP.get((model_name, file_name))
         if niche is None:
             continue
-        try:
+        def _blocking_fetch(model_name=model_name, file_name=file_name) -> Optional[str]:
             folder_id = drive.resolve_folder_path(
                 ["Models", model_name, "Full AI Content", "edited", _RESEND_DATE_FOLDER, "Videos"]
             )
             file_id = drive.find_file(file_name, folder_id)
             if not file_id:
-                not_found.append(f"{model_name} — {file_name}")
-                continue
+                return None
             tmp_path = os.path.join(tempfile.gettempdir(), f"resend_{uuid.uuid4().hex}_{file_name}")
             drive.download_file(file_id, tmp_path)
+            return tmp_path
+
+        try:
+            # Blocking Google API client — never call it directly on the event
+            # loop (it froze the whole server for everyone once already today).
+            tmp_path = await asyncio.wait_for(asyncio.to_thread(_blocking_fetch), timeout=60)
+            if tmp_path is None:
+                not_found.append(f"{model_name} — {file_name}")
+                continue
         except Exception as e:
             logger.error(f"Resend download failed for {model_name}/{file_name}: {e}")
             not_found.append(f"{model_name} — {file_name} (download error: {e})")

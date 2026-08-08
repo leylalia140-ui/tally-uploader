@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 import os
@@ -285,7 +286,8 @@ async def _recover_pending_from_log(token: str) -> dict | None:
     model_name = entry["model_name"]
     file_name = entry["file_name"]
     content_type = entry.get("content_type") or "Full AI Content"
-    try:
+
+    def _blocking_drive_fetch() -> str | None:
         created = datetime.fromisoformat(entry["created_at"]).astimezone(BERLIN)
         date_str = format_date(created)
         drive = GoogleDriveClient()
@@ -297,6 +299,16 @@ async def _recover_pending_from_log(token: str) -> dict | None:
             return None
         tmp_path = os.path.join(tempfile.gettempdir(), f"recover_{token}_{file_name}")
         drive.download_file(file_id, tmp_path)
+        return tmp_path
+
+    try:
+        # Google's client library is fully synchronous/blocking — run it off the
+        # event loop (asyncio.to_thread) with a hard timeout so a slow/hung Drive
+        # API call can never freeze the whole bot (approvals, webhooks, strike
+        # checks — everything shares this one process/event loop).
+        tmp_path = await asyncio.wait_for(asyncio.to_thread(_blocking_drive_fetch), timeout=60)
+        if tmp_path is None:
+            return None
     except Exception as e:
         logger.error(f"Drive recovery failed for token {token} ({model_name}/{file_name}): {e}")
         return None
