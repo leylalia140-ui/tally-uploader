@@ -570,6 +570,91 @@ async def admin_bulk_approve(request: Request, x_admin_secret: Optional[str] = H
     return await telegram_bot.bulk_approve(models)
 
 
+# One-off re-resend of the 60 videos from 08.08.2026 that were logged with the
+# OLD log_created() signature (no niche/topic_id) — self-heal alone would land
+# them in the wrong generic topic. Niche mapping verified against that day's logs.
+_RESEND_NICHE_MAP = {
+    ("Margaret Asian", fn): "Snapchat Based Reels"
+    for fn in [
+        "4.mp4", "5.mp4", "6.mp4",
+        "4_var_1.mp4", "4_var_2.mp4", "4_var_3.mp4", "4_var_4.mp4",
+        "5_var_1.mp4", "5_var_2.mp4", "5_var_3.mp4", "5_var_4.mp4",
+        "6_var_1.mp4", "6_var_2.mp4", "6_var_3.mp4", "6_var_4.mp4",
+    ]
+} | {
+    ("Margaret Asian", fn): "Interview Reels"
+    for fn in [
+        "7.mp4", "8.mp4", "9.mp4",
+        "7_var_1.mp4", "7_var_2.mp4", "7_var_3.mp4", "7_var_4.mp4",
+        "8_var_1.mp4", "8_var_2.mp4", "8_var_3.mp4", "8_var_4.mp4",
+        "9_var_1.mp4", "9_var_2.mp4", "9_var_3.mp4", "9_var_4.mp4",
+    ]
+} | {
+    ("Yuki Chen", fn): "School Girl Reels"
+    for fn in [
+        "1.mp4", "2.mp4", "3.mp4",
+        "3_var_1.mp4", "3_var_2.mp4", "3_var_3.mp4", "3_var_4.mp4",
+        "1_var_1.mp4", "1_var_2.mp4", "1_var_3.mp4", "1_var_4.mp4",
+        "2_var_1.mp4", "2_var_2.mp4", "2_var_3.mp4", "2_var_4.mp4",
+    ]
+} | {
+    ("Yuki Chen", fn): "Interview Reels"
+    for fn in [
+        "4.mp4", "5.mp4", "6.mp4",
+        "4_var_1.mp4", "4_var_2.mp4", "4_var_3.mp4", "4_var_4.mp4",
+        "5_var_1.mp4", "5_var_2.mp4", "5_var_3.mp4", "5_var_4.mp4",
+        "6_var_1.mp4", "6_var_2.mp4", "6_var_3.mp4", "6_var_4.mp4",
+    ]
+}
+_RESEND_DATE_FOLDER = "8th August 2026"
+
+
+@app.post("/admin/resend_legacy_unresolved")
+async def admin_resend_legacy_unresolved(x_admin_secret: Optional[str] = Header(None)):
+    if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    data = telegram_bot.approval_log._load()
+    unresolved = [(t, e) for t, e in data.items() if not e["resolved"]]
+
+    drive = GoogleDriveClient()
+    recovered, not_found = [], []
+    by_model_content: dict[tuple[str, str], list[dict]] = {}
+
+    for old_token, entry in unresolved:
+        model_name = entry["model_name"]
+        file_name = entry["file_name"]
+        niche = _RESEND_NICHE_MAP.get((model_name, file_name))
+        if niche is None:
+            continue
+        try:
+            folder_id = drive.resolve_folder_path(
+                ["Models", model_name, "Full AI Content", "edited", _RESEND_DATE_FOLDER, "Videos"]
+            )
+            file_id = drive.find_file(file_name, folder_id)
+            if not file_id:
+                not_found.append(f"{model_name} — {file_name}")
+                continue
+            tmp_path = os.path.join(tempfile.gettempdir(), f"resend_{uuid.uuid4().hex}_{file_name}")
+            drive.download_file(file_id, tmp_path)
+        except Exception as e:
+            logger.error(f"Resend download failed for {model_name}/{file_name}: {e}")
+            not_found.append(f"{model_name} — {file_name} (download error: {e})")
+            continue
+
+        telegram_bot.approval_log.set_resolved(old_token, True)
+        by_model_content.setdefault((model_name, niche), []).append(
+            {"file_name": file_name, "path": tmp_path}
+        )
+        recovered.append(f"{model_name} — {file_name} ({niche})")
+
+    for (model_name, niche), videos in by_model_content.items():
+        va_name = next((e["va_name"] for _, e in unresolved if e["model_name"] == model_name), "")
+        await telegram_bot.send_for_approval(videos, model_name, "Full AI Content", niche, va_name)
+
+    return {"recovered": recovered, "not_found_in_drive": not_found}
+
+
 @app.get("/admin/failed_uploads")
 async def admin_list_failed(x_admin_secret: Optional[str] = Header(None)):
     if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:
