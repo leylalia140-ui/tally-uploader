@@ -577,15 +577,6 @@ async def admin_bulk_approve(request: Request, x_admin_secret: Optional[str] = H
     return await telegram_bot.bulk_approve(models)
 
 
-@app.get("/admin/debug_recover/{token}")
-async def admin_debug_recover(token: str, x_admin_secret: Optional[str] = Header(None)):
-    if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:
-        raise HTTPException(status_code=403, detail="forbidden")
-    entry = telegram_bot.approval_log.get_entry(token)
-    result = await telegram_bot._recover_pending_from_log(token)
-    return {"entry": entry, "recovered": result is not None, "result": result}
-
-
 @app.get("/admin/failed_uploads")
 async def admin_list_failed(x_admin_secret: Optional[str] = Header(None)):
     if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:
