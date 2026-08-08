@@ -556,6 +556,26 @@ async def _send_approved_video(pending: dict) -> bool:
     return success
 
 
+async def push_all_unresolved() -> dict:
+    """Approve every video still unresolved in approval_log — regardless of
+    whether it's in the in-memory PENDING_APPROVALS (self-heals from Drive
+    via _recover_pending_from_log if not). For clearing a backlog of orphaned
+    approvals without needing Bjarne to click each one individually."""
+    data = approval_log._load()
+    tokens = [t for t, e in data.items() if not e["resolved"]]
+    approved, failed = [], []
+    for token in tokens:
+        pending = PENDING_APPROVALS.pop(token, None) or await _recover_pending_from_log(token)
+        if not pending:
+            failed.append({"token": token})
+            continue
+        approval_log.set_resolved(token, True)
+        sent_ok = await _send_approved_video(pending)
+        entry = {"model_name": pending["model_name"], "file_name": pending["file_name"]}
+        (approved if sent_ok else failed).append(entry)
+    return {"approved_count": len(approved), "approved": approved, "failed": failed}
+
+
 async def bulk_approve(model_names: list[str]) -> dict:
     """Approve every currently pending video for the given creators at once
     (same effect as clicking ✅ Approve on each), without editing the original

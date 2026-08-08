@@ -566,6 +566,15 @@ async def telegram_callback(request: Request):
     return {"ok": True}
 
 
+@app.post("/admin/push_unresolved")
+async def admin_push_unresolved(x_admin_secret: Optional[str] = Header(None)):
+    """Approve every video still stuck in approval_log (self-healing from Drive
+    as needed) — for clearing an orphaned backlog without Bjarne clicking each one."""
+    if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="forbidden")
+    return await telegram_bot.push_all_unresolved()
+
+
 @app.post("/admin/bulk_approve")
 async def admin_bulk_approve(request: Request, x_admin_secret: Optional[str] = Header(None)):
     if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:
