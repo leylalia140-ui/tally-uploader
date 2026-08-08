@@ -117,7 +117,7 @@ def extract_uploads(payload: dict) -> list[dict]:
         elif label in ("Was für eine Art von Content lädst du hoch?", "What kind of Content?"):
             content_type = _resolve_dropdown(f) or ""
 
-        elif label in ("Margaret Niche", "Yuki Niche"):
+        elif label in ("Margaret Niche", "Yuki Niche", "Abby Niche"):
             val = _resolve_dropdown(f) or ""
             if val:
                 niche = val

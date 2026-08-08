@@ -64,6 +64,9 @@ NICHE_TOPICS = {
     ("Yuki Chen",      "School Girl Reels"):    2,
     ("Yuki Chen",      "Sports (Football Reels)"): 1160,
     ("Yuki Chen",      "Interview Reels"):      1161,
+    ("Abby Parker",    "Snapchat Based Reels"): 1462,
+    ("Abby Parker",    "School Girl Reels"):    1463,
+    ("Abby Parker",    "Interview Reels"):      1464,
 }
 
 # ──────────────────────────────────────────────
