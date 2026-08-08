@@ -3,7 +3,7 @@ import logging
 import os
 from typing import Optional
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
+from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from config import settings
@@ -82,6 +82,37 @@ class GoogleDriveClient:
         if folder_id:
             return folder_id
         return self._create_folder(name, parent_id)
+
+    def find_file(self, name: str, parent_id: str) -> Optional[str]:
+        """Return file ID if a file named `name` exists inside parent_id, else None."""
+        escaped = name.replace("'", "\\'")
+        query = (
+            f"name='{escaped}' "
+            f"and '{parent_id}' in parents "
+            f"and trashed=false"
+        )
+        result = (
+            self.service.files()
+            .list(
+                q=query,
+                fields="files(id, name)",
+                pageSize=1,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+            )
+            .execute()
+        )
+        files = result.get("files", [])
+        return files[0]["id"] if files else None
+
+    def download_file(self, file_id: str, dest_path: str) -> None:
+        """Download a Drive file to a local path."""
+        request = self.service.files().get_media(fileId=file_id, supportsAllDrives=True)
+        with open(dest_path, "wb") as f:
+            downloader = MediaIoBaseDownload(f, request)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
 
     def resolve_folder_path(self, path_parts: list[str]) -> str:
         """
