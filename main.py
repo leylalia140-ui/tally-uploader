@@ -609,6 +609,18 @@ async def admin_retry_failed(x_admin_secret: Optional[str] = Header(None)):
     return {"results": results}
 
 
+@app.get("/admin/unresolved_approvals")
+async def admin_unresolved_approvals(x_admin_secret: Optional[str] = Header(None)):
+    if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="forbidden")
+    data = telegram_bot.approval_log._load()
+    unresolved = [
+        {"token": t, **{k: v for k, v in e.items() if k != "resolved"}}
+        for t, e in data.items() if not e["resolved"]
+    ]
+    return {"unresolved": unresolved, "count": len(unresolved)}
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
