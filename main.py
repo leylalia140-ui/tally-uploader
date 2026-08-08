@@ -23,6 +23,7 @@ from config import (
 )
 import notion_tasks
 from drive import GoogleDriveClient
+from dateutil_local import format_date
 import telegram_bot
 
 logging.basicConfig(
@@ -56,17 +57,6 @@ async def startup_event():
 # ──────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────
-
-def format_date(dt: datetime) -> str:
-    """Return e.g. '26th March 2026' (never '26-03-2026')."""
-    day = dt.day
-    suffix = (
-        "th"
-        if 11 <= day <= 13
-        else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
-    )
-    return f"{day}{suffix} {dt.strftime('%B %Y')}"
-
 
 def verify_tally_signature(body: bytes, signature: str) -> bool:
     """Optional: verify the webhook came from Tally."""

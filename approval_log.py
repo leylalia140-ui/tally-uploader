@@ -35,13 +35,26 @@ def _prune(data: dict) -> dict:
     return {t: e for t, e in data.items() if e["created_at"] >= cutoff}
 
 
-def log_created(token: str, model_name: str, file_name: str, va_name: str) -> None:
+def log_created(
+    token: str, model_name: str, file_name: str, va_name: str, *,
+    content_type: str = "", niche: str = "", topic_id: int | None = None,
+    slots: list | None = None, behave_target: dict | None = None,
+) -> None:
+    """content_type/niche/topic_id/slots/behave_target let a restart-orphaned
+    approval be fully reconstructed from Drive later (see telegram_bot.py
+    _recover_pending_from_log) — without them only model/file/va survive,
+    enough for the deadline check but not enough to resend the video."""
     data = _prune(_load())
     data[token] = {
         "created_at": datetime.now(BERLIN).isoformat(),
         "model_name": model_name,
         "file_name": file_name,
         "va_name": va_name,
+        "content_type": content_type,
+        "niche": niche,
+        "topic_id": topic_id,
+        "slots": slots or [],
+        "behave_target": behave_target,
         "resolved": False,
     }
     _save(data)
@@ -52,6 +65,10 @@ def set_resolved(token: str, resolved: bool) -> None:
     if token in data:
         data[token]["resolved"] = resolved
         _save(data)
+
+
+def get_entry(token: str) -> dict | None:
+    return _load().get(token)
 
 
 def overdue_unresolved(min_review_hours: int, deadline_hour: int, deadline_minute: int, buffer_minutes: int) -> list[dict]:

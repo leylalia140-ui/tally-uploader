@@ -2,8 +2,9 @@ import hashlib
 import logging
 import os
 import secrets
+import tempfile
 import httpx
-from datetime import date
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 from hydrogram import Client
 from config import (
@@ -14,6 +15,8 @@ from config import (
     PERSON_TELEGRAM_IDS, PERSON_DISPLAY_NAMES,
     STRIKE_MONTHLY_DISPLAY_MAX, ACTIVITY_STRIKE_TASKS,
 )
+from dateutil_local import format_date
+from drive import GoogleDriveClient
 import approval_log
 import activity_log
 import strikes
@@ -205,7 +208,11 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
                     "behave_target": behave_target,
                     "va_name": va_name,
                 }
-                approval_log.log_created(token, model_name, video["file_name"], va_name)
+                approval_log.log_created(
+                    token, model_name, video["file_name"], va_name,
+                    content_type=content_type, niche=niche, topic_id=dest_topic_id,
+                    slots=slots, behave_target=behave_target,
+                )
 
                 # 1. Send file as .mp4 document via Hydrogram (directly from disk)
                 try:
@@ -263,6 +270,51 @@ async def _edit_caption_with_buttons(chat_id: int, message_id: int, text: str, k
         )
 
 
+async def _recover_pending_from_log(token: str) -> dict | None:
+    """Reconstruct a PENDING_APPROVALS entry from approval_log + Google Drive.
+
+    PENDING_APPROVALS is in-memory only and gets wiped on every restart — if that
+    happens between "video sent to approval group" and "Bjarne clicks a button",
+    the token would otherwise be gone forever ("Session abgelaufen"). The video
+    itself is always safe on Drive (uploaded there before the approval message
+    is ever sent), so as long as approval_log still has the token's metadata,
+    the approval can be transparently healed instead of lost."""
+    entry = approval_log.get_entry(token)
+    if not entry or entry.get("resolved"):
+        return None
+    model_name = entry["model_name"]
+    file_name = entry["file_name"]
+    content_type = entry.get("content_type") or "Full AI Content"
+    try:
+        created = datetime.fromisoformat(entry["created_at"]).astimezone(BERLIN)
+        date_str = format_date(created)
+        drive = GoogleDriveClient()
+        folder_id = drive.resolve_folder_path(
+            ["Models", model_name, content_type, "edited", date_str, "Videos"]
+        )
+        file_id = drive.find_file(file_name, folder_id)
+        if not file_id:
+            return None
+        tmp_path = os.path.join(tempfile.gettempdir(), f"recover_{token}_{file_name}")
+        drive.download_file(file_id, tmp_path)
+    except Exception as e:
+        logger.error(f"Drive recovery failed for token {token} ({model_name}/{file_name}): {e}")
+        return None
+
+    niche = entry.get("niche", "")
+    return {
+        "file_path": tmp_path,
+        "file_name": file_name,
+        "model_name": model_name,
+        "content_type": content_type,
+        "niche": niche,
+        "topic_id": entry.get("topic_id") or NICHE_TOPICS.get((model_name, niche)) or SLOT_CREATORS.get(model_name),
+        "slots": entry.get("slots") or [],
+        "behave_target": entry.get("behave_target"),
+        "va_name": entry.get("va_name", ""),
+    }
+
+
 async def handle_callback(cq: dict) -> None:
     """Handle approve/reject/undo button presses."""
     from datetime import datetime, timedelta
@@ -308,8 +360,14 @@ async def handle_callback(cq: dict) -> None:
         ]])
         return
 
+    if token not in PENDING_APPROVALS and action in ("approve", "reject"):
+        recovered = await _recover_pending_from_log(token)
+        if recovered is not None:
+            PENDING_APPROVALS[token] = recovered
+            logger.info(f"Recovered orphaned approval from log+Drive: {recovered['file_name']}")
+
     if token not in PENDING_APPROVALS:
-        await _edit_caption(chat_id, message_id, "⚠️ Session abgelaufen — bitte neu hochladen")
+        await _edit_caption(chat_id, message_id, "⚠️ Video nicht mehr auffindbar — bitte neu hochladen")
         return
 
     pending = PENDING_APPROVALS.pop(token)
