@@ -17,7 +17,7 @@ from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Header
 from typing import Optional
 
 from config import (
-    settings, SLOT_CREATORS, APPROVAL_DEADLINE_HOUR, DEADLINE_BUFFER_MINUTES,
+    settings, SLOT_CREATORS, DEADLINE_BUFFER_MINUTES,
     ACTIVITY_STRIKE_TASKS, SHERRY_LIST_NOTION_TASK_TITLE, SHERRY_LIST_NOTION_ASSIGNED_TO,
     SHERRY_LIST_CHAT_ID, SHERRY_LIST_WINDOW_HOURS,
 )
@@ -286,8 +286,6 @@ async def _periodic_retry_loop() -> None:
 
 
 _STRIKE_CHECKS = [
-    {"key": "bjarne_approval", "hour": APPROVAL_DEADLINE_HOUR, "minute": 0, "fn": lambda: telegram_bot.check_daily_approval_deadline()},
-] + [
     {
         "key": f"activity_{t['chat_id']}_{t['deadline_hour']}{t['deadline_minute']}",
         "hour": t["deadline_hour"],
@@ -338,6 +336,11 @@ async def _daily_strike_check_loop() -> None:
     while True:
         await asyncio.sleep(5 * 60)
         try:
+            # Not anchor/fixed-time based like the checks below — each unresolved
+            # video has its own effective deadline (see check_daily_approval_deadline's
+            # docstring), so this just gets re-evaluated every tick.
+            await telegram_bot.check_daily_approval_deadline()
+
             now = datetime.now(BERLIN)
             for check in _STRIKE_CHECKS:
                 for days_back in (1, 0):

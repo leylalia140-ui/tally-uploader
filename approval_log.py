@@ -54,15 +54,31 @@ def set_resolved(token: str, resolved: bool) -> None:
         _save(data)
 
 
-def unresolved_created_in_last_24h() -> list[dict]:
-    """Videos created since the previous deadline check that are still unresolved.
+def overdue_unresolved(min_review_hours: int, deadline_hour: int, deadline_minute: int, buffer_minutes: int) -> list[dict]:
+    """Videos whose *effective* deadline has passed.
 
-    Using a rolling 24h window (rather than calendar-day matching) means a
-    video uploaded after today's 13:00 check rolls into tomorrow's window
-    instead of being silently skipped, while a video that's been sitting
-    unresolved for longer than 24h only ever counts once (the day it missed
-    its own deadline) — matching how the deadline is meant to behave.
+    The effective deadline is the LATER of:
+      (a) the next daily deadline_hour:deadline_minute (+buffer) on/after upload, or
+      (b) upload time + min_review_hours
+
+    (b) exists so a video a VA uploads right before the daily cutoff (e.g. 12:55)
+    or very late at night (e.g. 19:00, rolling the "next 13:00" too close) still
+    gives Bjarne a fair minimum window, instead of near-zero or an unreasonably
+    short one — he's not at fault for when a VA happens to deliver.
     """
-    cutoff = (datetime.now(BERLIN) - timedelta(hours=24)).isoformat()
+    now = datetime.now(BERLIN)
     data = _load()
-    return [e for e in data.values() if not e["resolved"] and e["created_at"] >= cutoff]
+    overdue = []
+    for e in data.values():
+        if e["resolved"]:
+            continue
+        created = datetime.fromisoformat(e["created_at"])
+        daily_cutoff = created.replace(hour=deadline_hour, minute=deadline_minute, second=0, microsecond=0)
+        if daily_cutoff <= created:
+            daily_cutoff += timedelta(days=1)
+        daily_cutoff += timedelta(minutes=buffer_minutes)
+        min_cutoff = created + timedelta(hours=min_review_hours)
+        effective_deadline = max(daily_cutoff, min_cutoff)
+        if now >= effective_deadline:
+            overdue.append(e)
+    return overdue

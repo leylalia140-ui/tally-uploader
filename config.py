@@ -109,6 +109,12 @@ STRIKE_GROUP_CHAT_ID = -5014530893  # "🚨 Bjarne Fuchs Strikes Tracking"
 DEADLINE_BUFFER_MINUTES = 15  # grace period added to every deadline below before a strike fires
 STRIKE_MONTHLY_DISPLAY_MAX = 3  # shown as "X/3" in messages — display only, no automatic consequence at 3
 
+# A video's effective approval deadline is the LATER of "next 13:00" and
+# "upload time + this many hours" — so a video a VA uploads right before/after
+# 13:00, or very late at night, still gives Bjarne a fair minimum window
+# instead of an unfairly short (or already-passed) one.
+MIN_REVIEW_HOURS_AFTER_UPLOAD = 6
+
 # Bjarne: Full-AI-Content-Videos in the APPROVAL BOT group must be approved/rejected by this hour
 APPROVAL_DEADLINE_HOUR = 13
 

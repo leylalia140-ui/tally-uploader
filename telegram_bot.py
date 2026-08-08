@@ -10,7 +10,8 @@ from config import (
     settings, TELEGRAM_ROUTING, VIDEO_DISTRIBUTION_TARGETS,
     SLOT_CREATORS, NICHE_TOPICS, AI_MODELS_REELS_CHAT_ID, SLOTS_PER_CREATOR,
     VA_TELEGRAM_IDS, JEREMI_TELEGRAM_ID, STRIKE_GROUP_CHAT_ID,
-    APPROVAL_DEADLINE_HOUR, PERSON_TELEGRAM_IDS, PERSON_DISPLAY_NAMES,
+    APPROVAL_DEADLINE_HOUR, DEADLINE_BUFFER_MINUTES, MIN_REVIEW_HOURS_AFTER_UPLOAD,
+    PERSON_TELEGRAM_IDS, PERSON_DISPLAY_NAMES,
     STRIKE_MONTHLY_DISPLAY_MAX, ACTIVITY_STRIKE_TASKS,
 )
 import approval_log
@@ -592,17 +593,23 @@ async def _notify_strike(person: str, entry: dict, extra_dm_detail: str = "") ->
 
 
 async def check_daily_approval_deadline() -> None:
-    """Called once daily (~13:00 + buffer Berlin). If any video uploaded in the
-    last 24h is still neither approved nor rejected, Bjarne gets one strike."""
-    unresolved = approval_log.unresolved_created_in_last_24h()
-    if not unresolved:
+    """Called every ~5min tick (not a fixed daily time — see main.py). Strikes
+    once per day if any video's *effective* deadline has passed and it's still
+    neither approved nor rejected. Effective deadline is normally 13:00, but
+    never less than MIN_REVIEW_HOURS_AFTER_UPLOAD hours after the video was
+    actually uploaded — so a VA delivering late (e.g. 19:00) doesn't leave
+    Bjarne an unfairly short window."""
+    overdue = approval_log.overdue_unresolved(
+        MIN_REVIEW_HOURS_AFTER_UPLOAD, APPROVAL_DEADLINE_HOUR, 0, DEADLINE_BUFFER_MINUTES
+    )
+    if not overdue:
         return
     if strikes.has_strike_today("bjarne"):
-        return  # already struck today (e.g. loop re-fired after a restart)
+        return  # already struck today
 
-    reason = f"{len(unresolved)} Video(s) nicht bis 13:00 Uhr approved/rejected"
+    reason = f"{len(overdue)} Video(s) nicht rechtzeitig approved/rejected"
     entry = strikes.add_strike("bjarne", reason)
-    files_list = "\n".join(f"• {e['model_name']} — {e['file_name']}" for e in unresolved)
+    files_list = "\n".join(f"• {e['model_name']} — {e['file_name']}" for e in overdue)
     await _notify_strike("bjarne", entry, extra_dm_detail=files_list)
 
 
