@@ -31,8 +31,18 @@ def _save(data: dict) -> None:
 
 
 def _prune(data: dict) -> dict:
+    """Drop old RESOLVED entries only. Unresolved entries are kept forever
+    (until resolved) — they're the only way _recover_pending_from_log can
+    reconstruct a still-open approval button after a restart wipes
+    PENDING_APPROVALS. Pruning them by age alone used to silently break any
+    button left open past RETENTION_DAYS: the button stayed clickable in
+    Telegram, but the click would show "Video nicht mehr auffindbar" forever
+    because the data needed to recover it had already been deleted here."""
     cutoff = (datetime.now(BERLIN) - timedelta(days=RETENTION_DAYS)).isoformat()
-    return {t: e for t, e in data.items() if e["created_at"] >= cutoff}
+    return {
+        t: e for t, e in data.items()
+        if not e.get("resolved") or e["created_at"] >= cutoff
+    }
 
 
 def log_created(
