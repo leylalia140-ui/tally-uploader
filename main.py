@@ -615,6 +615,18 @@ async def admin_retry_failed(x_admin_secret: Optional[str] = Header(None)):
     return {"results": results}
 
 
+@app.post("/admin/clear_backlog_tracking")
+async def admin_clear_backlog_tracking(x_admin_secret: Optional[str] = Header(None)):
+    """Mark every unresolved approval-log entry as resolved WITHOUT sending or
+    approving anything — pure tracking reset so the strike/overdue count (and
+    Bjarne's open-video count) starts at zero. Videos are untouched on Drive;
+    their Telegram buttons stay visible but become inert."""
+    if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="forbidden")
+    count = telegram_bot.approval_log.resolve_all_unresolved()
+    return {"cleared": count}
+
+
 @app.get("/admin/unresolved_approvals")
 async def admin_unresolved_approvals(x_admin_secret: Optional[str] = Header(None)):
     if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:

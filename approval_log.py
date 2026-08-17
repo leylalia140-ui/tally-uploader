@@ -81,6 +81,24 @@ def get_entry(token: str) -> dict | None:
     return _load().get(token)
 
 
+def resolve_all_unresolved() -> int:
+    """Mark every currently-unresolved entry as resolved, without approving,
+    rejecting, or sending anything — a pure tracking reset. Used to clear a
+    backlog out of the strike/overdue count when the videos themselves are
+    being handled outside the normal flow. Existing Telegram buttons for
+    these tokens keep showing in the chat but become inert (a click after
+    this hits the same "not found" recovery-miss as any other resolved
+    token) — this does not edit or remove the original messages."""
+    data = _load()
+    count = 0
+    for e in data.values():
+        if not e.get("resolved"):
+            e["resolved"] = True
+            count += 1
+    _save(data)
+    return count
+
+
 def overdue_unresolved(min_review_hours: int, deadline_hour: int, deadline_minute: int, buffer_minutes: int) -> list[dict]:
     """Videos whose *effective* deadline has passed.
 
