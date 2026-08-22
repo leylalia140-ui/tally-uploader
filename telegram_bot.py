@@ -8,6 +8,34 @@ import httpx
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 from hydrogram import Client
+
+
+def _patch_hydrogram_errors() -> None:
+    """hydrogram 0.2.0 defines ~120 real Telegram RPC error classes (FileWriteFailed,
+    Timedout, TopicIdInvalid, ...) inside hydrogram.errors.exceptions submodules but
+    never re-exports them from hydrogram.errors itself. hydrogram's own dispatcher
+    (errors/rpc_error.py) resolves the class to raise via
+    getattr(import_module("hydrogram.errors"), name) — for any of these ~120 names
+    that lookup fails with an unrelated AttributeError instead of raising the real,
+    typed (and often clearly transient, e.g. "please try again later") exception.
+    Confirmed live: an approved-video resend crashed with "module 'hydrogram.errors'
+    has no attribute 'FileWriteFailed'" instead of the retryable FileWriteFailed it
+    should have been. Back-fill every exception class hydrogram already defines but
+    forgot to export, so real Telegram errors surface as themselves."""
+    import hydrogram.errors as errors_module
+    import hydrogram.errors.exceptions as exceptions_module
+    for name in dir(exceptions_module):
+        if not hasattr(errors_module, name):
+            obj = getattr(exceptions_module, name)
+            if isinstance(obj, type):
+                setattr(errors_module, name, obj)
+
+
+_patch_hydrogram_errors()
+
+SEND_RETRY_ATTEMPTS = 3
+SEND_RETRY_DELAY_SECONDS = 5
+
 from config import (
     settings, TELEGRAM_ROUTING, VIDEO_DISTRIBUTION_TARGETS,
     SLOT_CREATORS, NICHE_TOPICS, AI_MODELS_REELS_CHAT_ID, SLOTS_PER_CREATOR,
@@ -90,6 +118,26 @@ def _get_slots(video_index: int) -> list[int]:
 logger = logging.getLogger(__name__)
 
 SHERRY_HICKS_VARIANTS = {"Sherry Hicks", "Sherry Hicks Shell"}
+
+
+async def _send_document_with_retries(app: Client, **kwargs) -> tuple[bool, Exception | None]:
+    """Send a document via Hydrogram, retrying transient failures (e.g. Telegram's
+    own FileWriteFailed/Timeout — "please try again later") before giving up.
+    Returns (success, last_error)."""
+    last_error: Exception | None = None
+    for attempt in range(1, SEND_RETRY_ATTEMPTS + 1):
+        try:
+            await app.send_document(**kwargs)
+            return True, None
+        except Exception as e:
+            last_error = e
+            logger.warning(
+                f"send_document attempt {attempt}/{SEND_RETRY_ATTEMPTS} failed "
+                f"({kwargs.get('file_name')}): {e}"
+            )
+            if attempt < SEND_RETRY_ATTEMPTS:
+                await asyncio.sleep(SEND_RETRY_DELAY_SECONDS)
+    return False, last_error
 
 
 def _telegram_api() -> str:
@@ -198,6 +246,33 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
                     behave_target = VIDEO_DISTRIBUTION_TARGETS[video_index % 2]
 
                 token = secrets.token_urlsafe(16)
+
+                # 1. Send file as .mp4 document via Hydrogram (directly from disk),
+                # retrying transient Telegram-side failures (e.g. FileWriteFailed:
+                # "please try again later"). Bookkeeping (PENDING_APPROVALS/
+                # approval_log) is only created AFTER this succeeds — otherwise a
+                # failed send would leave a phantom, never-delivered approval sitting
+                # in the backlog forever (inflating Bjarne's strike count for a video
+                # he never actually saw a button for).
+                sent_ok, send_error = await _send_document_with_retries(
+                    app,
+                    chat_id=APPROVAL_CHAT_ID,
+                    document=video["path"],
+                    file_name=video["file_name"],
+                    message_thread_id=approval_topic_id,
+                    force_document=True,
+                )
+                if not sent_ok:
+                    logger.error(f"Error sending approval file after {SEND_RETRY_ATTEMPTS} attempts: {send_error}")
+                    await send_error_notification(
+                        f"Video konnte nicht ins Approval gesendet werden ({video['file_name']}) "
+                        f"nach {SEND_RETRY_ATTEMPTS} Versuchen: {send_error}"
+                    )
+                    if os.path.exists(video["path"]):
+                        os.unlink(video["path"])
+                    continue
+                logger.info(f"Sent file for approval: {video['file_name']}")
+
                 PENDING_APPROVALS[token] = {
                     "file_path": video["path"],
                     "file_name": video["file_name"],
@@ -214,20 +289,6 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
                     content_type=content_type, niche=niche, topic_id=dest_topic_id,
                     slots=slots, behave_target=behave_target,
                 )
-
-                # 1. Send file as .mp4 document via Hydrogram (directly from disk)
-                try:
-                    await app.send_document(
-                        chat_id=APPROVAL_CHAT_ID,
-                        document=video["path"],
-                        file_name=video["file_name"],
-                        message_thread_id=approval_topic_id,
-                        force_document=True,
-                    )
-                    logger.info(f"Sent file for approval: {video['file_name']}")
-                except Exception as e:
-                    logger.error(f"Error sending approval file: {e}")
-                    await send_error_notification(f"Video konnte nicht ins Approval gesendet werden ({video['file_name']}): {e}")
 
                 # 2. Send buttons message via Bot API
                 dup_prefix = "⚠️ Duplikat!\n" if is_dup else ""
@@ -519,10 +580,14 @@ async def _send_approved_video(pending: dict) -> bool:
     api_hash = os.environ.get("TG_API_HASH", "")
 
     success = False
+    last_error: Exception | None = None
     try:
         async with Client("uploader", api_id=api_id, api_hash=api_hash, session_string=session_string) as app:
-            # 1. Send to AI Models Reels (creator-specific topic)
-            await app.send_document(
+            # 1. Send to AI Models Reels (creator-specific topic) — retries transient
+            # Telegram-side failures (e.g. FileWriteFailed: "please try again later")
+            # instead of immediately declaring the video lost.
+            ok, last_error = await _send_document_with_retries(
+                app,
                 chat_id=AI_MODELS_REELS_CHAT_ID,
                 document=file_path,
                 file_name=pending["file_name"],
@@ -530,29 +595,33 @@ async def _send_approved_video(pending: dict) -> bool:
                 caption=slots_caption,
                 force_document=True,
             )
-            logger.info(f"Approved & sent: {pending['file_name']} → AI Models Reels topic {pending['topic_id']}")
+            if ok:
+                logger.info(f"Approved & sent: {pending['file_name']} → AI Models Reels topic {pending['topic_id']}")
 
-            # 2. Margaret Asian → also send to Behave x Amin
-            if pending.get("behave_target"):
-                bt = pending["behave_target"]
-                await app.send_document(
-                    chat_id=int(bt["chat_id"]),
-                    document=file_path,
-                    file_name=pending["file_name"],
-                    message_thread_id=bt["thread_id"],
-                    force_document=True,
-                )
-                logger.info(f"Also sent to Behave x Amin thread {bt['thread_id']}")
-            success = True
+                # 2. Margaret Asian → also send to Behave x Amin
+                if pending.get("behave_target"):
+                    bt = pending["behave_target"]
+                    ok, last_error = await _send_document_with_retries(
+                        app,
+                        chat_id=int(bt["chat_id"]),
+                        document=file_path,
+                        file_name=pending["file_name"],
+                        message_thread_id=bt["thread_id"],
+                        force_document=True,
+                    )
+                    if ok:
+                        logger.info(f"Also sent to Behave x Amin thread {bt['thread_id']}")
+                success = ok
     except Exception as e:
-        logger.error(f"Error sending approved video: {e}")
+        last_error = e
+    if not success:
+        logger.error(f"Error sending approved video after {SEND_RETRY_ATTEMPTS} attempts: {last_error}")
         await send_error_notification(
             f"Approved Video konnte NICHT gesendet werden ({pending['file_name']}, {pending['model_name']}) "
-            f"— TG_SESSION evtl. abgelaufen: {e}"
+            f"nach {SEND_RETRY_ATTEMPTS} Versuchen — TG_SESSION evtl. abgelaufen: {last_error}"
         )
-    finally:
-        if os.path.exists(file_path):
-            os.unlink(file_path)
+    if os.path.exists(file_path):
+        os.unlink(file_path)
     return success
 
 
