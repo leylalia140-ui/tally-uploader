@@ -625,13 +625,29 @@ async def _send_approved_video(pending: dict) -> bool:
     return success
 
 
-async def push_all_unresolved() -> dict:
+async def push_all_unresolved(since: str | None = None, until: str | None = None) -> dict:
     """Approve every video still unresolved in approval_log — regardless of
     whether it's in the in-memory PENDING_APPROVALS (self-heals from Drive
     via _recover_pending_from_log if not). For clearing a backlog of orphaned
-    approvals without needing Bjarne to click each one individually."""
+    approvals without needing Bjarne to click each one individually.
+
+    since/until: optional "YYYY-MM-DD" (Berlin-local) bounds, both inclusive,
+    filtering on the entry's created_at date — for pushing through only part
+    of the backlog (e.g. an older batch) while leaving newer uploads for a
+    human to review as normal."""
+    since_date = datetime.strptime(since, "%Y-%m-%d").date() if since else None
+    until_date = datetime.strptime(until, "%Y-%m-%d").date() if until else None
     data = approval_log._load()
-    tokens = [t for t, e in data.items() if not e["resolved"]]
+    tokens = []
+    for t, e in data.items():
+        if e["resolved"]:
+            continue
+        created = datetime.fromisoformat(e["created_at"]).astimezone(BERLIN).date()
+        if since_date and created < since_date:
+            continue
+        if until_date and created > until_date:
+            continue
+        tokens.append(t)
     approved, failed = [], []
     for token in tokens:
         pending = PENDING_APPROVALS.pop(token, None) or await _recover_pending_from_log(token)
