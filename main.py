@@ -425,9 +425,6 @@ async def _process_uploads_core(uploads: list[dict]) -> None:
     folder_id = await asyncio.to_thread(drive.resolve_folder_path, folder_path)
     type_folder_ids: dict[str, str] = {}
 
-    # Videos for Margaret Asian approval (file paths, not bytes)
-    approval_videos = []
-
     for upload in uploads:
         file_url = upload.get("file_url")
         file_name = upload.get("file_name", "video.mp4")
@@ -461,8 +458,11 @@ async def _process_uploads_core(uploads: list[dict]) -> None:
         logger.info(f"Downloaded {size / 1024 / 1024:.1f} MB → {tmp_path}")
 
         if content_type == "Full AI Content" and not is_image(file_name, mime_type):
-            # convert_to_h264 deletes tmp_path itself, returns new out_path
-            video_path, file_name = convert_to_h264(tmp_path, file_name)
+            # convert_to_h264 deletes tmp_path itself, returns new out_path.
+            # Runs in a thread — ffmpeg is CPU-bound and would otherwise freeze
+            # the whole event loop (every other webhook/Telegram callback) for
+            # the duration of the conversion.
+            video_path, file_name = await asyncio.to_thread(convert_to_h264, tmp_path, file_name)
             mime_type = "video/mp4"
         else:
             video_path = tmp_path
@@ -489,16 +489,19 @@ async def _process_uploads_core(uploads: list[dict]) -> None:
             and not is_image(file_name, mime_type)
             and content_type == "Full AI Content"
         ):
-            approval_videos.append({"file_name": file_name, "path": video_path})
+            # Sent immediately per video instead of batched after the whole
+            # submission finishes — one slow/large video no longer delays
+            # every other video in the same Tally submission from reaching
+            # the approval group.
+            await telegram_bot.send_for_approval(
+                [{"file_name": file_name, "path": video_path}], model_name, content_type, niche, va_name
+            )
+            # telegram_bot.py owns the file now and cleans it up after approve/reject
         else:
             os.unlink(video_path)
 
     folder_link = await asyncio.to_thread(drive.make_folder_public, folder_id)
     logger.info(f"Folder link: {folder_link}")
-
-    if model_name in SLOT_CREATORS and approval_videos:
-        await telegram_bot.send_for_approval(approval_videos, model_name, content_type, niche, va_name)
-        # telegram_bot.py owns the files now and cleans them up after approve/reject
 
     await telegram_bot.send_notifications(
         model_name=model_name,
