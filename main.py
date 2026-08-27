@@ -519,10 +519,12 @@ async def _process_uploads_core(uploads: list[dict]) -> None:
             if content_type == INSTAGRAM_FEED_PICTURES_CONTENT_TYPE and is_image(file_name, mime_type):
                 await _push_image_to_content_tracker(video_path, file_name, mime_type, model_name)
 
-            if (
-                model_name in SLOT_CREATORS
-                and not is_image(file_name, mime_type)
-                and content_type == "Full AI Content"
+            if not is_image(file_name, mime_type) and (
+                (model_name in SLOT_CREATORS and content_type == "Full AI Content")
+                or (
+                    model_name in ("Margaret Asian", "Abby Parker", "Yuki Chen")
+                    and content_type == "Instagram Reels"
+                )
             ):
                 # Sent immediately per video instead of batched after the whole
                 # submission finishes — one slow/large video no longer delays
