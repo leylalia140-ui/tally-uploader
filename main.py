@@ -251,6 +251,15 @@ async def _retry_failed_upload(filename: str) -> Optional[str]:
     try:
         await _process_uploads_core(uploads)
     except Exception as e:
+        # Files that made it through this retry attempt (Drive + approval-send,
+        # where applicable) before it failed again must not be re-saved for the
+        # next retry — same reasoning as in _do_process_all_uploads.
+        to_retry = getattr(e, "remaining_uploads", uploads)
+        if not to_retry:
+            os.remove(path)
+        elif to_retry != uploads:
+            with open(path, "w") as f:
+                json.dump(to_retry, f)
         return f"{type(e).__name__}: {e}"
     os.remove(path)
     return None
@@ -390,11 +399,26 @@ async def _do_process_all_uploads(uploads: list[dict]) -> None:
         await _process_uploads_core(uploads)
     except Exception as e:
         logger.error(f"FATAL error processing upload for {model_name}: {e}", exc_info=True)
-        upload_id = _save_failed_uploads(uploads)
+        # Uploads that already reached Drive (and, if approval-eligible, were
+        # already sent to the approval group) before the failure are excluded
+        # from the retry set — retrying the full original list would re-upload
+        # and re-send duplicate approval cards for content already out for
+        # review. See the try/except around the per-upload loop below.
+        to_retry = getattr(e, "remaining_uploads", uploads)
+        if not to_retry:
+            # Every file already reached Drive (and approval-send, where
+            # applicable) — only the trailing folder-link/notification step
+            # failed. Nothing left to retry; just alert.
+            await telegram_bot.send_error_notification(
+                f"Nacharbeiten fehlgeschlagen für {model_name} / {content_type} (alle Dateien bereits "
+                f"hochgeladen/gesendet): {type(e).__name__}: {e}"
+            )
+            return
+        upload_id = _save_failed_uploads(to_retry)
         await telegram_bot.send_error_notification(
             f"Upload fehlgeschlagen für {model_name} / {content_type}: {type(e).__name__}: {e}\n"
-            f"Gespeichert als {upload_id} — wird automatisch erneut versucht (alle 15 Min) "
-            f"oder per POST /admin/retry_failed."
+            f"{len(to_retry)}/{len(uploads)} Datei(en) noch offen — gespeichert als {upload_id}, "
+            f"wird automatisch erneut versucht (alle 15 Min) oder per POST /admin/retry_failed."
         )
 
 
@@ -425,90 +449,112 @@ async def _process_uploads_core(uploads: list[dict]) -> None:
     folder_id = await asyncio.to_thread(drive.resolve_folder_path, folder_path)
     type_folder_ids: dict[str, str] = {}
 
+    # Tracks which of the original uploads still need a retry on failure.
+    # Videos are now sent for approval as soon as each one is done (see
+    # below), so a failure partway through a multi-file submission must
+    # NOT re-queue files that already went out for approval — that would
+    # re-upload and re-send duplicate approval cards for content a human
+    # may already be reviewing. Only files not yet fully processed at the
+    # point of failure are kept for retry.
+    remaining_uploads = list(uploads)
+
     for upload in uploads:
-        file_url = upload.get("file_url")
-        file_name = upload.get("file_name", "video.mp4")
-        mime_type = upload.get("mime_type", "video/mp4")
-
-        if not file_url:
-            logger.error(f"Missing file_url: {upload}")
-            continue
-
-        type_folder_name = "Images" if is_image(file_name, mime_type) else "Videos"
-        if type_folder_name not in type_folder_ids:
-            type_folder_ids[type_folder_name] = await asyncio.to_thread(
-                drive.get_or_create_folder, type_folder_name, folder_id
-            )
-        upload_folder_id = type_folder_ids[type_folder_name]
-
-        logger.info(f"Processing: {model_name} / {content_type} / {date_str} — {file_name}")
-        logger.info(f"Downloading: {file_url}")
-
-        # Stream directly to a temp file — never load the full video into RAM
-        ext_in = os.path.splitext(file_name)[1] or ".mp4"
-        with tempfile.NamedTemporaryFile(suffix=ext_in, delete=False) as tmp_f:
-            tmp_path = tmp_f.name
-            size = 0
-            async with httpx.AsyncClient(timeout=900, follow_redirects=True) as client:
-                async with client.stream("GET", file_url) as response:
-                    response.raise_for_status()
-                    async for chunk in response.aiter_bytes(chunk_size=10 * 1024 * 1024):
-                        tmp_f.write(chunk)
-                        size += len(chunk)
-        logger.info(f"Downloaded {size / 1024 / 1024:.1f} MB → {tmp_path}")
-
-        if content_type == "Full AI Content" and not is_image(file_name, mime_type):
-            # convert_to_h264 deletes tmp_path itself, returns new out_path.
-            # Runs in a thread — ffmpeg is CPU-bound and would otherwise freeze
-            # the whole event loop (every other webhook/Telegram callback) for
-            # the duration of the conversion.
-            video_path, file_name = await asyncio.to_thread(convert_to_h264, tmp_path, file_name)
-            mime_type = "video/mp4"
-        else:
-            video_path = tmp_path
-
         try:
-            with open(video_path, "rb") as f:
-                await asyncio.to_thread(
-                    drive.upload_file,
-                    file_name=file_name,
-                    file_stream=f,
-                    folder_id=upload_folder_id,
-                    mime_type=mime_type,
+            file_url = upload.get("file_url")
+            file_name = upload.get("file_name", "video.mp4")
+            mime_type = upload.get("mime_type", "video/mp4")
+
+            if not file_url:
+                logger.error(f"Missing file_url: {upload}")
+                remaining_uploads.remove(upload)
+                continue
+
+            type_folder_name = "Images" if is_image(file_name, mime_type) else "Videos"
+            if type_folder_name not in type_folder_ids:
+                type_folder_ids[type_folder_name] = await asyncio.to_thread(
+                    drive.get_or_create_folder, type_folder_name, folder_id
                 )
-            logger.info(f"Uploaded to Drive: {file_name}")
-        except Exception:
-            os.unlink(video_path)
+            upload_folder_id = type_folder_ids[type_folder_name]
+
+            logger.info(f"Processing: {model_name} / {content_type} / {date_str} — {file_name}")
+            logger.info(f"Downloading: {file_url}")
+
+            # Stream directly to a temp file — never load the full video into RAM
+            ext_in = os.path.splitext(file_name)[1] or ".mp4"
+            with tempfile.NamedTemporaryFile(suffix=ext_in, delete=False) as tmp_f:
+                tmp_path = tmp_f.name
+                size = 0
+                async with httpx.AsyncClient(timeout=900, follow_redirects=True) as client:
+                    async with client.stream("GET", file_url) as response:
+                        response.raise_for_status()
+                        async for chunk in response.aiter_bytes(chunk_size=10 * 1024 * 1024):
+                            tmp_f.write(chunk)
+                            size += len(chunk)
+            logger.info(f"Downloaded {size / 1024 / 1024:.1f} MB → {tmp_path}")
+
+            if content_type == "Full AI Content" and not is_image(file_name, mime_type):
+                # convert_to_h264 deletes tmp_path itself, returns new out_path.
+                # Runs in a thread — ffmpeg is CPU-bound and would otherwise freeze
+                # the whole event loop (every other webhook/Telegram callback) for
+                # the duration of the conversion.
+                video_path, file_name = await asyncio.to_thread(convert_to_h264, tmp_path, file_name)
+                mime_type = "video/mp4"
+            else:
+                video_path = tmp_path
+
+            try:
+                with open(video_path, "rb") as f:
+                    await asyncio.to_thread(
+                        drive.upload_file,
+                        file_name=file_name,
+                        file_stream=f,
+                        folder_id=upload_folder_id,
+                        mime_type=mime_type,
+                    )
+                logger.info(f"Uploaded to Drive: {file_name}")
+            except Exception:
+                os.unlink(video_path)
+                raise
+
+            if content_type == INSTAGRAM_FEED_PICTURES_CONTENT_TYPE and is_image(file_name, mime_type):
+                await _push_image_to_content_tracker(video_path, file_name, mime_type, model_name)
+
+            if (
+                model_name in SLOT_CREATORS
+                and not is_image(file_name, mime_type)
+                and content_type == "Full AI Content"
+            ):
+                # Sent immediately per video instead of batched after the whole
+                # submission finishes — one slow/large video no longer delays
+                # every other video in the same Tally submission from reaching
+                # the approval group.
+                await telegram_bot.send_for_approval(
+                    [{"file_name": file_name, "path": video_path}], model_name, content_type, niche, va_name
+                )
+                # telegram_bot.py owns the file now and cleans it up after approve/reject
+            else:
+                os.unlink(video_path)
+
+            remaining_uploads.remove(upload)
+        except Exception as e:
+            e.remaining_uploads = remaining_uploads
             raise
 
-        if content_type == INSTAGRAM_FEED_PICTURES_CONTENT_TYPE and is_image(file_name, mime_type):
-            await _push_image_to_content_tracker(video_path, file_name, mime_type, model_name)
+    # Every upload is fully done (Drive + approval-send, where applicable) at
+    # this point — a failure below must not re-trigger the whole batch.
+    try:
+        folder_link = await asyncio.to_thread(drive.make_folder_public, folder_id)
+        logger.info(f"Folder link: {folder_link}")
 
-        if (
-            model_name in SLOT_CREATORS
-            and not is_image(file_name, mime_type)
-            and content_type == "Full AI Content"
-        ):
-            # Sent immediately per video instead of batched after the whole
-            # submission finishes — one slow/large video no longer delays
-            # every other video in the same Tally submission from reaching
-            # the approval group.
-            await telegram_bot.send_for_approval(
-                [{"file_name": file_name, "path": video_path}], model_name, content_type, niche, va_name
-            )
-            # telegram_bot.py owns the file now and cleans it up after approve/reject
-        else:
-            os.unlink(video_path)
-
-    folder_link = await asyncio.to_thread(drive.make_folder_public, folder_id)
-    logger.info(f"Folder link: {folder_link}")
-
-    await telegram_bot.send_notifications(
-        model_name=model_name,
-        content_type=content_type,
-        date_str=date_str,
-        drive_links=[folder_link],
-    )
+        await telegram_bot.send_notifications(
+            model_name=model_name,
+            content_type=content_type,
+            date_str=date_str,
+            drive_links=[folder_link],
+        )
+    except Exception as e:
+        e.remaining_uploads = []
+        raise
 
 
 # ──────────────────────────────────────────────────────────────
