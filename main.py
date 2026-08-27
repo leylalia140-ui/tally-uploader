@@ -644,6 +644,58 @@ async def admin_bulk_approve(request: Request, x_admin_secret: Optional[str] = H
     return await telegram_bot.bulk_approve(models)
 
 
+@app.post("/admin/retro_push_ig_reels_20260826")
+async def admin_retro_push_ig_reels_20260826(x_admin_secret: Optional[str] = Header(None)):
+    """One-off: send the 5 Instagram-Reels submissions from 26.08.2026 (~21:36-21:42
+    Berlin, uploaded by James for Margaret Asian + Yuki Chen) into the approval
+    group. These predate the fix that made Instagram Reels approval-gated for
+    Margaret/Abby/Yuki, so they went straight to Drive without ever being sent
+    for approval. Just sends them (Approve/Reject buttons) — does NOT auto-approve.
+    Remove this endpoint after use."""
+    if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    items = [
+        {"file_id": "1C_wNiWjqlrIgklHdXWyZqUOVrbDGSSMG", "file_name": "d329824808384d8ab15aeadd85aa1145.mp4", "model_name": "Margaret Asian", "niche": "School Girl Reels"},
+        {"file_id": "1vVmaYWIjYlv9wcdEKMXG6ThrzZixsoA0", "file_name": "b956d7cd1104490ea41d4cfe20e8da99.mp4", "model_name": "Margaret Asian", "niche": "School Girl Reels"},
+        {"file_id": "172wQIsfEPcPn1imR_0K7D6JQYVOdKrsj", "file_name": "0d58e6aad851441497fc319fc4954c9a.mp4", "model_name": "Margaret Asian", "niche": "School Girl Reels"},
+        {"file_id": "1UkDaCxaTJh9ZkWyBTT0YnBIalewDxW3A", "file_name": "7d7458546a55447bbe3ceaae6a89c0f2.mp4", "model_name": "Margaret Asian", "niche": "Interview Reels"},
+        {"file_id": "1SP1WlGsx7POeb_M7lo_0jNlVh-kdOm-5", "file_name": "a003616767db408dbd0394f2e253c6aa.mp4", "model_name": "Margaret Asian", "niche": "Interview Reels"},
+        {"file_id": "1A3qE2ulfwFUAyh0hkKMiSSuLWAOwoecc", "file_name": "5def4d945dda405996ad3831b78efeb5.mp4", "model_name": "Margaret Asian", "niche": "Interview Reels"},
+        {"file_id": "1vTxko71Xt8ZZjZfG-roDnsNCG-OzqI7v", "file_name": "3fdb0395e7b342eaba1b3209cafbbace.mp4", "model_name": "Yuki Chen", "niche": "School Girl Reels"},
+        {"file_id": "1u9Ll5kaRQU5gRX5ukSMrD2VzZOF5nwZ-", "file_name": "f6281b837ed94d76be8ba070175713ac.mp4", "model_name": "Yuki Chen", "niche": "School Girl Reels"},
+        {"file_id": "1auZj9tzEyuTPA816DFPsEEzTvQB5qpbB", "file_name": "22b9c3346afb40db9af0a1c9f88559af.mp4", "model_name": "Yuki Chen", "niche": "School Girl Reels"},
+        {"file_id": "1LhOP0ig17WQKusvwhfa-0xKGZGljaKoM", "file_name": "5f9aaee9ec854c5f96479f487e237431.mp4", "model_name": "Yuki Chen", "niche": "Interview Reels"},
+        {"file_id": "1ARcfDDFP6KPziCAwBDCzJliJmin7WhV9", "file_name": "9634bfe783f94c13a444c1bfc7986126.mp4", "model_name": "Yuki Chen", "niche": "Interview Reels"},
+        {"file_id": "16KXJ8QCWyOtH_iBHcI2gaYZHUzjDNaWw", "file_name": "c14ff8970085460d9d055cf35eb3ed9c.mp4", "model_name": "Yuki Chen", "niche": "Interview Reels"},
+        {"file_id": "1mptJyfA1LRhGXfb5IbUdsOAO1T4a8IQp", "file_name": "68ADF868-B86E-4A33-8755-1B8CC6DC24AF.mov", "model_name": "Yuki Chen", "niche": "Snapchat Based Reels"},
+        {"file_id": "1yOV8yChJn7UNwDspjrncffxn6OyjjIYL", "file_name": "94FEDB1D-A5B1-4B2D-A6E1-CD4148CD035A.mov", "model_name": "Yuki Chen", "niche": "Snapchat Based Reels"},
+        {"file_id": "18dF0HqjL1-6OVuacT7zfDcS3076ixk0L", "file_name": "522447E8-0A1D-4981-9EF6-6BB9E11E7F4D.mov", "model_name": "Yuki Chen", "niche": "Snapchat Based Reels"},
+    ]
+
+    results = []
+    drive = GoogleDriveClient()
+    for item in items:
+        tmp_path = os.path.join(tempfile.gettempdir(), f"retro_{item['file_id']}_{item['file_name']}")
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(drive.download_file, item["file_id"], tmp_path), timeout=120
+            )
+            await telegram_bot.send_for_approval(
+                [{"file_name": item["file_name"], "path": tmp_path}],
+                item["model_name"],
+                "Instagram Reels",
+                item["niche"],
+                "James",
+            )
+            results.append({"file_name": item["file_name"], "status": "sent"})
+        except Exception as e:
+            logger.error(f"Retro-push failed for {item['file_name']}: {e}")
+            results.append({"file_name": item["file_name"], "status": "error", "detail": str(e)})
+
+    return {"results": results}
+
+
 @app.get("/admin/failed_uploads")
 async def admin_list_failed(x_admin_secret: Optional[str] = Header(None)):
     if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:
