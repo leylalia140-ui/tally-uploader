@@ -660,42 +660,6 @@ async def admin_debug_log_search(q: str, x_admin_secret: Optional[str] = Header(
     return {"matches": matches}
 
 
-@app.post("/admin/retro_push_20260831_stranded")
-async def admin_retro_push_20260831_stranded(x_admin_secret: Optional[str] = Header(None)):
-    """One-off: re-send the 3 Yuki Chen / Instagram Reels / School Girl Reels
-    videos from 31.08.2026 ~19:50 that were wrongly marked resolved after a
-    transient Drive search-index-lag false negative. Known Drive file IDs
-    from manual diagnosis — sends fresh approval cards (does NOT auto-approve).
-    Remove this endpoint after use."""
-    if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:
-        raise HTTPException(status_code=403, detail="forbidden")
-
-    items = [
-        {"file_id": "1-GAkRWjs7uQo3y_jXFTeDAJJm2Rje6ym", "file_name": "da0382649b194fa0.MP4"},
-        {"file_id": "1qs7th9icRbeEaHQhjMBC0f8-a3LyEGyi", "file_name": "23cb8eb617a44c69.MP4"},
-        {"file_id": "1rRVexftREaKcsbGeAmaicFs6yoVJ4AlW", "file_name": "91617008e21943fd.MP4"},
-    ]
-    results = []
-    drive = GoogleDriveClient()
-    for item in items:
-        tmp_path = os.path.join(tempfile.gettempdir(), f"retro_{item['file_id']}_{item['file_name']}")
-        try:
-            await asyncio.wait_for(
-                asyncio.to_thread(drive.download_file, item["file_id"], tmp_path), timeout=120
-            )
-            await telegram_bot.send_for_approval(
-                [{"file_name": item["file_name"], "path": tmp_path}],
-                "Yuki Chen",
-                "Instagram Reels",
-                "School Girl Reels",
-                "James",
-            )
-            results.append({"file_name": item["file_name"], "status": "sent"})
-        except Exception as e:
-            logger.error(f"Retro-push failed for {item['file_name']}: {e}")
-            results.append({"file_name": item["file_name"], "status": "error", "detail": str(e)})
-
-    return {"results": results}
 
 
 @app.get("/admin/failed_uploads")
