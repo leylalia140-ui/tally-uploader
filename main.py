@@ -22,6 +22,7 @@ from config import (
     SHERRY_LIST_CHAT_ID, SHERRY_LIST_WINDOW_HOURS,
 )
 import notion_tasks
+import approval_log
 from drive import GoogleDriveClient
 from dateutil_local import format_date
 import telegram_bot
@@ -642,6 +643,21 @@ async def admin_bulk_approve(request: Request, x_admin_secret: Optional[str] = H
     if not models:
         raise HTTPException(status_code=400, detail="models required")
     return await telegram_bot.bulk_approve(models)
+
+
+@app.get("/admin/debug_log_search")
+async def admin_debug_log_search(q: str, x_admin_secret: Optional[str] = Header(None)):
+    """Temporary diagnostic: search ALL approval_log entries (resolved or not)
+    by filename substring. Remove after use."""
+    if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="forbidden")
+    data = approval_log._load()
+    matches = [
+        {"token": token, **entry}
+        for token, entry in data.items()
+        if q.lower() in entry.get("file_name", "").lower()
+    ]
+    return {"matches": matches}
 
 
 @app.get("/admin/failed_uploads")
