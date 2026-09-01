@@ -4,6 +4,7 @@ import logging
 import os
 import secrets
 import tempfile
+import time
 import httpx
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
@@ -355,7 +356,18 @@ async def _recover_pending_from_log(token: str) -> dict | None:
         folder_id = drive.resolve_folder_path(
             ["Models", model_name, content_type, "edited", date_str, "Videos"]
         )
-        file_id = drive.find_file(file_name, folder_id)
+        # Drive's files.list search index can lag a few seconds behind an
+        # upload that just happened (e.g. a click that lands moments after
+        # the video was uploaded, or a bulk recovery sweep racing a batch
+        # still in progress) — retry briefly before giving up on a video
+        # that is, in reality, already sitting there.
+        file_id = None
+        for attempt in range(4):
+            file_id = drive.find_file(file_name, folder_id)
+            if file_id:
+                break
+            if attempt < 3:
+                time.sleep(3)
         if not file_id:
             return None
         tmp_path = os.path.join(tempfile.gettempdir(), f"recover_{token}_{file_name}")
