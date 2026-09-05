@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 BERLIN = ZoneInfo("Europe/Berlin")
 
 import httpx
-from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Header
+from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Header, Body
 from typing import Optional
 
 from config import (
@@ -632,6 +632,19 @@ async def admin_push_unresolved(
     if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:
         raise HTTPException(status_code=403, detail="forbidden")
     return await telegram_bot.push_all_unresolved(since=since, until=until)
+
+
+@app.post("/admin/skip_tokens")
+async def admin_skip_tokens(
+    tokens: list[str] = Body(..., embed=True),
+    x_admin_secret: Optional[str] = Header(None),
+):
+    """One-off: mark specific approval_log tokens resolved without sending —
+    for confirmed (MD5-verified) duplicate uploads that should not be distributed
+    or reach the fb-content-tracker sync. Remove after use."""
+    if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="forbidden")
+    return await telegram_bot.skip_tokens(tokens)
 
 
 @app.post("/admin/bulk_approve")

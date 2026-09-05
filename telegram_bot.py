@@ -637,6 +637,23 @@ async def _send_approved_video(pending: dict) -> bool:
     return success
 
 
+async def skip_tokens(tokens: list[str]) -> dict:
+    """Mark specific approval_log tokens resolved WITHOUT sending — for confirmed
+    duplicate uploads that should not be distributed (and therefore never reach
+    the fb-content-tracker Telegram sync, which watches the same destination chats
+    push_all_unresolved sends to)."""
+    skipped, missing = [], []
+    for token in tokens:
+        entry = approval_log.get_entry(token)
+        if not entry or entry.get("resolved"):
+            missing.append(token)
+            continue
+        PENDING_APPROVALS.pop(token, None)
+        approval_log.set_resolved(token, True)
+        skipped.append({"token": token, "file_name": entry["file_name"], "model_name": entry["model_name"]})
+    return {"skipped_count": len(skipped), "skipped": skipped, "missing": missing}
+
+
 async def push_all_unresolved(since: str | None = None, until: str | None = None) -> dict:
     """Approve every video still unresolved in approval_log — regardless of
     whether it's in the in-memory PENDING_APPROVALS (self-heals from Drive
