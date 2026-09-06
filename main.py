@@ -645,42 +645,6 @@ async def admin_bulk_approve(request: Request, x_admin_secret: Optional[str] = H
     return await telegram_bot.bulk_approve(models)
 
 
-@app.post("/admin/retro_push_20260906_ken")
-async def admin_retro_push_20260906_ken(x_admin_secret: Optional[str] = Header(None)):
-    """One-off: send the 72 Instagram-AI-Reels videos from 06.09.2026 ~00:00-00:08
-    Berlin (Abby Parker + Yuki Chen, uploaded by Ken) into the approval group.
-    These predate the "Instagram AI Reels" content-type-string fix, so they went
-    straight to Drive without ever being sent for approval. Sends them (Approve/
-    Reject buttons) — does NOT auto-approve. Remove this endpoint after use."""
-    if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:
-        raise HTTPException(status_code=403, detail="forbidden")
-
-    with open(os.path.join(os.path.dirname(__file__), "_retro_ken_items.json")) as f:
-        items = json.load(f)
-
-    results = []
-    drive = GoogleDriveClient()
-    for item in items:
-        tmp_path = os.path.join(tempfile.gettempdir(), f"retro_{item['file_id']}_{item['file_name']}")
-        try:
-            await asyncio.wait_for(
-                asyncio.to_thread(drive.download_file, item["file_id"], tmp_path), timeout=120
-            )
-            await telegram_bot.send_for_approval(
-                [{"file_name": item["file_name"], "path": tmp_path}],
-                item["model_name"],
-                "Instagram AI Reels",
-                item["niche"],
-                "Ken",
-            )
-            results.append({"file_name": item["file_name"], "status": "sent"})
-        except Exception as e:
-            logger.error(f"Retro-push failed for {item['file_name']}: {e}")
-            results.append({"file_name": item["file_name"], "status": "error", "detail": str(e)})
-
-    return {"results": results, "sent": sum(1 for r in results if r["status"] == "sent")}
-
-
 @app.get("/admin/debug_log_search")
 async def admin_debug_log_search(q: str, x_admin_secret: Optional[str] = Header(None)):
     """Temporary diagnostic: search ALL approval_log entries (resolved or not)
