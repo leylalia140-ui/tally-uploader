@@ -72,7 +72,7 @@ NICHE_TOPICS = {
 # Special case: Abby Parker's "German School Girl Reels" videos get their own
 # dedicated approval topic and, on approve, skip "AI Models Reels" entirely —
 # they're pushed straight into the Content Tracker instead (new category there).
-ABBY_GERMAN_NICHE = "German School Girl Reels"
+ABBY_GERMAN_NICHE = "GERMAN School Girl Reels"
 ABBY_GERMAN_APPROVAL_TOPIC_ID = 9077
 
 # ──────────────────────────────────────────────
