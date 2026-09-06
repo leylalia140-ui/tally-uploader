@@ -524,7 +524,7 @@ async def _process_uploads_core(uploads: list[dict]) -> None:
                 (model_name in SLOT_CREATORS and content_type == "Full AI Content")
                 or (
                     model_name in ("Margaret Asian", "Abby Parker", "Yuki Chen")
-                    and content_type == "Instagram Reels"
+                    and content_type in ("Instagram Reels", "Instagram AI Reels")
                 )
             ):
                 # Sent immediately per video instead of batched after the whole
