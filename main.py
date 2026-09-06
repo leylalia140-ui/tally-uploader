@@ -645,6 +645,44 @@ async def admin_bulk_approve(request: Request, x_admin_secret: Optional[str] = H
     return await telegram_bot.bulk_approve(models)
 
 
+@app.post("/admin/create_forum_topic")
+async def admin_create_forum_topic(
+    chat_id: int, title: str, x_admin_secret: Optional[str] = Header(None)
+):
+    """One-off: create a new forum topic via Hydrogram Raw API. Remove after use."""
+    if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    from hydrogram import Client
+    from hydrogram.raw import functions
+    import random as _random
+
+    session_string = os.environ.get("TG_SESSION", "")
+    api_id = int(os.environ.get("TG_API_ID", 0))
+    api_hash = os.environ.get("TG_API_HASH", "")
+
+    app_client = Client("uploader", api_id=api_id, api_hash=api_hash, session_string=session_string)
+    await app_client.start()
+    try:
+        peer = await app_client.resolve_peer(chat_id)
+        r = await app_client.invoke(
+            functions.channels.CreateForumTopic(
+                channel=peer,
+                title=title,
+                random_id=_random.randint(1, 2**31 - 1),
+                icon_color=0x6FB9F0,
+            )
+        )
+        topic_id = None
+        for update in r.updates:
+            if hasattr(update, "message") and hasattr(update.message, "id"):
+                topic_id = update.message.id
+                break
+        return {"raw": str(r), "topic_id": topic_id}
+    finally:
+        await app_client.stop()
+
+
 @app.get("/admin/debug_log_search")
 async def admin_debug_log_search(q: str, x_admin_secret: Optional[str] = Header(None)):
     """Temporary diagnostic: search ALL approval_log entries (resolved or not)
