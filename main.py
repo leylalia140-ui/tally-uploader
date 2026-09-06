@@ -102,10 +102,10 @@ def extract_uploads(payload: dict) -> list[dict]:
         label = f.get("label", "")
         ftype = f.get("type", "")
 
-        if label in ("Was ist dein Creator Name", "For Which Model are you uploading Content?"):
+        if label in ("Was ist dein Creator Name", "For Which Model are you uploading Content?", "¿Cuál es tu nombre de creadora?"):
             model_name = _resolve_dropdown(f) or (f.get("value") or "").strip()
 
-        elif label in ("Was für eine Art von Content lädst du hoch?", "What kind of Content?"):
+        elif label in ("Was für eine Art von Content lädst du hoch?", "What kind of Content?", "¿Qué tipo de contenido estás subiendo?"):
             content_type = _resolve_dropdown(f) or ""
 
         elif label in ("Margaret Niche", "Yuki Niche", "Abby Niche"):
@@ -436,7 +436,7 @@ async def _process_uploads_core(uploads: list[dict]) -> None:
         folder_subfolder = "edited"
     elif model_name == "Sherry Hicks":
         folder_subfolder = "not edited"
-    elif model_name == "Margaret Asian" and form_id == "mVMbpj" and any(k in content_lower for k in ("ppv", "feed")):
+    elif model_name == "Margaret Asian" and any(k in content_lower for k in ("ppv", "feed")):
         folder_subfolder = "not edited"
     else:
         folder_subfolder = "edited"
