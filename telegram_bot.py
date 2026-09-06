@@ -44,6 +44,7 @@ from config import (
     APPROVAL_DEADLINE_HOUR, DEADLINE_BUFFER_MINUTES, MIN_REVIEW_HOURS_AFTER_UPLOAD,
     PERSON_TELEGRAM_IDS, PERSON_DISPLAY_NAMES,
     STRIKE_MONTHLY_DISPLAY_MAX, ACTIVITY_STRIKE_TASKS,
+    ABBY_GERMAN_NICHE, ABBY_GERMAN_APPROVAL_TOPIC_ID,
 )
 from dateutil_local import format_date
 from drive import GoogleDriveClient
@@ -209,9 +210,15 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
     """Send each video to approval group as .mp4 file + separate buttons message.
     videos: list of {"file_name": str, "path": str} — paths to temp files on disk.
     Files are kept alive in PENDING_APPROVALS and deleted after approve/reject."""
-    # approval_topic: always the model's main topic in the approval group
-    approval_topic_id = SLOT_CREATORS[model_name]
-    # dest_topic: niche-specific topic in AI Models Reels (used after approval)
+    # approval_topic: normally the model's main topic in the approval group —
+    # except Abby Parker's German School Girl Reels, which has its own topic
+    # and (see _send_approved_video) skips AI Models Reels entirely on approve.
+    if model_name == "Abby Parker" and niche == ABBY_GERMAN_NICHE:
+        approval_topic_id = ABBY_GERMAN_APPROVAL_TOPIC_ID
+    else:
+        approval_topic_id = SLOT_CREATORS[model_name]
+    # dest_topic: niche-specific topic in AI Models Reels (used after approval,
+    # not used for the German School Girl Reels special case above)
     dest_topic_id = NICHE_TOPICS.get((model_name, niche)) or SLOT_CREATORS[model_name]
 
     session_string = os.environ.get("TG_SESSION", "")
@@ -577,11 +584,48 @@ async def _edit_caption(chat_id: int, message_id: int, text: str) -> None:
         )
 
 
+async def _push_approved_video_to_content_tracker(pending: dict) -> bool:
+    """Abby Parker / German School Girl Reels special case: instead of AI Models
+    Reels, push the approved video straight into the Content Tracker under its
+    own category. Deletes the temp file after, regardless of outcome."""
+    file_path = pending["file_path"]
+    ok = False
+    if not settings.FB_CONTENT_TRACKER_INTERNAL_TOKEN:
+        logger.error("FB_CONTENT_TRACKER_INTERNAL_TOKEN not set, cannot push German School Girl Reels video")
+    else:
+        try:
+            with open(file_path, "rb") as f:
+                async with httpx.AsyncClient(timeout=120) as client:
+                    resp = await client.post(
+                        f"{settings.FB_CONTENT_TRACKER_URL}/api/internal/upload-video",
+                        headers={"X-Internal-Token": settings.FB_CONTENT_TRACKER_INTERNAL_TOKEN},
+                        files={"files": (pending["file_name"], f, "video/mp4")},
+                        data={"creator": pending["model_name"], "niche": pending["niche"]},
+                    )
+                    resp.raise_for_status()
+            ok = True
+            logger.info(f"Approved & pushed to Content Tracker: {pending['file_name']} ({pending['niche']})")
+        except Exception as e:
+            logger.error(f"Failed to push {pending['file_name']} to Content Tracker: {e}")
+            await send_error_notification(
+                f"Approved Video konnte nicht an den Content Tracker gesendet werden "
+                f"({pending['file_name']}, {pending['model_name']} / {pending['niche']}): {e}"
+            )
+    if os.path.exists(file_path):
+        os.unlink(file_path)
+    return ok
+
+
 async def _send_approved_video(pending: dict) -> bool:
-    """Send approved video to AI Models Reels topic (+ Behave x Amin for Margaret).
+    """Send approved video to AI Models Reels topic (+ Behave x Amin for Margaret) —
+    or, for Abby Parker / German School Girl Reels, push straight to the Content
+    Tracker instead (see _push_approved_video_to_content_tracker).
     Deletes temp file after, regardless of outcome. Returns True on success, False on
     failure (e.g. dead TG_SESSION) — callers must check this and NOT tell Bjarne
     "sent" when it actually failed."""
+    if pending["model_name"] == "Abby Parker" and pending.get("niche") == ABBY_GERMAN_NICHE:
+        return await _push_approved_video_to_content_tracker(pending)
+
     file_path = pending["file_path"]
     slots_caption = (
         "📌 Post on: " + " | ".join(f"Account {s}" for s in pending.get("slots", [])) + "\n"
