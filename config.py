@@ -44,12 +44,27 @@ MODEL_CONTENT_RESTRICTIONS = {
 AI_MODELS_REELS_CHAT_ID = -1003965304219
 SLOTS_PER_CREATOR = 6  # accounts per creator
 
-# Creator → Topic-ID in "AI Models Reels" Forum-Supergroup (fallback / models ohne Nische)
+# Creator → Topic-ID in "AI Models Reels" Forum-Supergroup (fallback / models ohne Nische).
+# Also used as the creator's approval-group topic ID (telegram_bot.send_for_approval) —
+# for the original 4 creators these two topic IDs happen to be the same number
+# (both groups' topics were created in the same order early on). That's a
+# coincidence, not a rule: new creators get independently auto-assigned topic
+# IDs per group, so their approval-topic ID and AI-Models-Reels topic ID will
+# usually differ — see DEFAULT_DEST_TOPICS below for those.
 SLOT_CREATORS = {
     "Margaret Asian": 4,
     "Abby Parker": 3,
     "Yuki Chen": 2,
     "Sherry Hicks": 236,
+    "Bertha Butts": 9898,  # approval-group topic ID
+}
+
+# Creator → fallback Topic-ID in "AI Models Reels" (used when SLOT_CREATORS[model]
+# is NOT also that creator's AI-Models-Reels topic ID, i.e. for any creator added
+# after the original 4 — see note above). Checked before falling back to
+# SLOT_CREATORS[model_name] itself.
+DEFAULT_DEST_TOPICS = {
+    "Bertha Butts": 4293,
 }
 
 # (Model, Nische) → Topic-ID — überschreibt SLOT_CREATORS wenn Nische bekannt

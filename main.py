@@ -647,8 +647,8 @@ async def admin_bulk_approve(request: Request, x_admin_secret: Optional[str] = H
 
 @app.post("/admin/create_forum_topic")
 async def admin_create_forum_topic(request: Request, x_admin_secret: Optional[str] = Header(None)):
-    """Temporary: create a Telegram forum topic via the TG_SESSION account
-    (used for onboarding new creators). Remove after use."""
+    """Create a Telegram forum topic via the TG_SESSION account — used when
+    onboarding a new creator (the bot account has no "Manage Topics" right)."""
     if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:
         raise HTTPException(status_code=403, detail="forbidden")
     body = await request.json()

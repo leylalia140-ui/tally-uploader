@@ -39,7 +39,7 @@ SEND_RETRY_DELAY_SECONDS = 5
 
 from config import (
     settings, TELEGRAM_ROUTING, VIDEO_DISTRIBUTION_TARGETS,
-    SLOT_CREATORS, NICHE_TOPICS, AI_MODELS_REELS_CHAT_ID, SLOTS_PER_CREATOR,
+    SLOT_CREATORS, NICHE_TOPICS, DEFAULT_DEST_TOPICS, AI_MODELS_REELS_CHAT_ID, SLOTS_PER_CREATOR,
     VA_TELEGRAM_IDS, JEREMI_TELEGRAM_ID, STRIKE_GROUP_CHAT_ID,
     APPROVAL_DEADLINE_HOUR, DEADLINE_BUFFER_MINUTES, MIN_REVIEW_HOURS_AFTER_UPLOAD,
     PERSON_TELEGRAM_IDS, PERSON_DISPLAY_NAMES,
@@ -248,8 +248,15 @@ async def send_for_approval(videos: list[dict], model_name: str, content_type: s
     else:
         approval_topic_id = SLOT_CREATORS[model_name]
     # dest_topic: niche-specific topic in AI Models Reels (used after approval,
-    # not used for the German School Girl Reels special case above)
-    dest_topic_id = NICHE_TOPICS.get((model_name, niche)) or SLOT_CREATORS[model_name]
+    # not used for the German School Girl Reels special case above). Falls back
+    # to DEFAULT_DEST_TOPICS first (creators whose AI-Models-Reels topic ID
+    # differs from their approval-topic ID), then to SLOT_CREATORS[model_name]
+    # for the original creators where those two IDs happen to coincide.
+    dest_topic_id = (
+        NICHE_TOPICS.get((model_name, niche))
+        or DEFAULT_DEST_TOPICS.get(model_name)
+        or SLOT_CREATORS[model_name]
+    )
 
     session_string = os.environ.get("TG_SESSION", "")
     api_id = int(os.environ.get("TG_API_ID", 0))
