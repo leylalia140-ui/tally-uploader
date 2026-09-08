@@ -523,7 +523,7 @@ async def _process_uploads_core(uploads: list[dict]) -> None:
             if not is_image(file_name, mime_type) and (
                 (model_name in SLOT_CREATORS and content_type == "Full AI Content")
                 or (
-                    model_name in ("Margaret Asian", "Abby Parker", "Yuki Chen")
+                    model_name in ("Margaret Asian", "Abby Parker", "Yuki Chen", "Bertha Butts")
                     and content_type in ("Instagram Reels", "Instagram AI Reels")
                 )
             ):
