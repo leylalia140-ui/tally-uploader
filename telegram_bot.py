@@ -58,6 +58,36 @@ BERLIN = ZoneInfo("Europe/Berlin")
 APPROVAL_CHAT_ID = -1004259848545
 PENDING_APPROVALS: dict = {}   # token → {file_path, file_name, model_name, content_type, slots, topic_id, behave_target, va_name}
 REJECTED_APPROVALS: dict = {}  # token → pending-dict + "rejected_at" + "chat_id" + "message_id"
+
+
+async def create_forum_topic(chat_id: int, title: str) -> dict:
+    """Create a forum topic in the given supergroup via the TG_SESSION user
+    account (the Bot API's createForumTopic needs "Manage Topics" rights the
+    bot account doesn't have here). Returns the new topic's thread id — this
+    isn't in hydrogram's high-level create_forum_topic() return value (it only
+    parses the ForumTopicCreated action, not the service message's own id), so
+    we call the raw API directly, same as that method does internally, and
+    additionally read the id off updates[1].message."""
+    from hydrogram import raw
+
+    session_string = os.environ.get("TG_SESSION", "")
+    api_id = int(os.environ.get("TG_API_ID", 0))
+    api_hash = os.environ.get("TG_API_HASH", "")
+
+    app = Client("uploader", api_id=api_id, api_hash=api_hash, session_string=session_string)
+    await app.start()
+    try:
+        r = await app.invoke(
+            raw.functions.channels.CreateForumTopic(
+                channel=await app.resolve_peer(chat_id),
+                title=title,
+                random_id=app.rnd_id(),
+            )
+        )
+        topic_id = r.updates[1].message.id
+        return {"ok": True, "chat_id": chat_id, "topic_id": topic_id, "title": title}
+    finally:
+        await app.stop()
 AWAITING_REASON: dict = {}    # force-reply message_id → {token, va_name, file_name}
 
 # ── Daily slot counters (reset each Berlin midnight) ──
@@ -422,12 +452,12 @@ async def handle_callback(cq: dict) -> None:
     # ── Undo rejected ──
     if action == "undo":
         if token not in REJECTED_APPROVALS:
-            await _edit_caption(chat_id, message_id, "⚠️ Rückgängig nicht mehr möglich — Datei bereits gelöscht")
+            await _edit_caption_with_buttons(chat_id, message_id, "⚠️ Rückgängig nicht mehr möglich — Datei bereits gelöscht", [])
             return
         rejected = REJECTED_APPROVALS.pop(token)
         file_path = rejected.get("file_path", "")
         if not file_path or not os.path.exists(file_path):
-            await _edit_caption(chat_id, message_id, "⚠️ Datei nicht mehr verfügbar — bitte neu hochladen")
+            await _edit_caption_with_buttons(chat_id, message_id, "⚠️ Datei nicht mehr verfügbar — bitte neu hochladen", [])
             return
         # Restore to pending (hash already removed on reject, re-add it)
         _daily_hashes.setdefault(rejected["model_name"], {"date": _today(), "hashes": set()})
@@ -459,7 +489,16 @@ async def handle_callback(cq: dict) -> None:
             logger.info(f"Recovered orphaned approval from log+Drive: {recovered['file_name']}")
 
     if token not in PENDING_APPROVALS:
-        await _edit_caption(chat_id, message_id, "⚠️ Video nicht mehr auffindbar — bitte neu hochladen")
+        # Distinguish "already handled earlier" (harmless — a stale duplicate button
+        # from a previous day's message with the same recurring filename, tapped by
+        # mistake) from "genuinely missing/unrecoverable" (Drive lookup failed for a
+        # still-open approval — the real, worrying case). Also strip the button here
+        # so a leftover stale keyboard can't be tapped a second time either.
+        entry = approval_log.get_entry(token)
+        if entry and entry.get("resolved"):
+            await _edit_caption_with_buttons(chat_id, message_id, "✅ Bereits bearbeitet — keine Aktion nötig", [])
+        else:
+            await _edit_caption_with_buttons(chat_id, message_id, "⚠️ Video nicht mehr auffindbar — bitte neu hochladen", [])
         return
 
     pending = PENDING_APPROVALS.pop(token)
@@ -471,12 +510,12 @@ async def handle_callback(cq: dict) -> None:
             f"⏳ Wird gesendet → AI Models Reels ({pending['model_name']})…")
         sent_ok = await _send_approved_video(pending)
         if sent_ok:
-            await _edit_caption(chat_id, message_id,
-                f"✅ Gesendet → {pending['model_name']}\n📌 {slots_text}\n📁 {pending['file_name']}")
+            await _edit_caption_with_buttons(chat_id, message_id,
+                f"✅ Gesendet → {pending['model_name']}\n📌 {slots_text}\n📁 {pending['file_name']}", [])
         else:
-            await _edit_caption(chat_id, message_id,
+            await _edit_caption_with_buttons(chat_id, message_id,
                 f"⚠️ FEHLER beim Senden → {pending['model_name']}\n📁 {pending['file_name']}\n"
-                f"Video ist verloren, bitte über Tally erneut hochladen. Jeremi wurde benachrichtigt.")
+                f"Video ist verloren, bitte über Tally erneut hochladen. Jeremi wurde benachrichtigt.", [])
     elif action == "reject":
         approval_log.set_resolved(token, True)
         file_path = pending.get("file_path", "")

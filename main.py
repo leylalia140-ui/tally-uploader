@@ -645,6 +645,20 @@ async def admin_bulk_approve(request: Request, x_admin_secret: Optional[str] = H
     return await telegram_bot.bulk_approve(models)
 
 
+@app.post("/admin/create_forum_topic")
+async def admin_create_forum_topic(request: Request, x_admin_secret: Optional[str] = Header(None)):
+    """Temporary: create a Telegram forum topic via the TG_SESSION account
+    (used for onboarding new creators). Remove after use."""
+    if not settings.ADMIN_SECRET or x_admin_secret != settings.ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="forbidden")
+    body = await request.json()
+    chat_id = body.get("chat_id")
+    title = body.get("title")
+    if not chat_id or not title:
+        raise HTTPException(status_code=400, detail="chat_id and title required")
+    return await telegram_bot.create_forum_topic(chat_id, title)
+
+
 @app.get("/admin/debug_log_search")
 async def admin_debug_log_search(q: str, x_admin_secret: Optional[str] = Header(None)):
     """Temporary diagnostic: search ALL approval_log entries (resolved or not)
