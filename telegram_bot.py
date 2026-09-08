@@ -88,6 +88,22 @@ async def create_forum_topic(chat_id: int, title: str) -> dict:
         return {"ok": True, "chat_id": chat_id, "topic_id": topic_id, "title": title}
     finally:
         await app.stop()
+
+
+async def rename_forum_topic(chat_id: int, topic_id: int, title: str) -> dict:
+    """Rename a forum topic via the TG_SESSION account (same rights gap as
+    create_forum_topic — the bot account can't edit topics either)."""
+    session_string = os.environ.get("TG_SESSION", "")
+    api_id = int(os.environ.get("TG_API_ID", 0))
+    api_hash = os.environ.get("TG_API_HASH", "")
+
+    app = Client("uploader", api_id=api_id, api_hash=api_hash, session_string=session_string)
+    await app.start()
+    try:
+        ok = await app.edit_forum_topic(chat_id, topic_id, title=title)
+        return {"ok": ok, "chat_id": chat_id, "topic_id": topic_id, "title": title}
+    finally:
+        await app.stop()
 AWAITING_REASON: dict = {}    # force-reply message_id → {token, va_name, file_name}
 
 # ── Daily slot counters (reset each Berlin midnight) ──
