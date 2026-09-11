@@ -12,14 +12,17 @@
   select, input[type=text] { width: 100%; box-sizing: border-box; padding: 10px 12px; font-size: 15px; border: 1px solid #d5d5d5; border-radius: 8px; background: #fff; }
   select:focus, input:focus { outline: none; border-color: #6b8afd; box-shadow: 0 0 0 3px rgba(107,138,253,.15); }
   .hidden { display: none !important; }
-  .piece { border-top: 1px solid #eee; padding-top: 8px; margin-top: 20px; }
   .drop {
     margin-top: 8px; border: 1.5px dashed #c9c9c9; border-radius: 10px; padding: 28px 16px;
     text-align: center; color: #777; cursor: pointer; font-size: 14px; position: relative;
   }
   .drop.dragover { border-color: #6b8afd; background: #f3f6ff; }
   .drop input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-  .drop .fname { margin-top: 6px; font-weight: 600; color: #1a1a1a; word-break: break-all; }
+  .file-row { border: 1px solid #eee; border-radius: 8px; padding: 12px 14px; margin-top: 10px; }
+  .file-row .row-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .file-row .fname { font-weight: 600; color: #1a1a1a; word-break: break-all; font-size: 14px; }
+  .file-row .remove { background: none; border: none; color: #999; font-size: 18px; cursor: pointer; line-height: 1; padding: 0 4px; }
+  .file-row .remove:hover { color: #c0392b; }
   .bar-track { height: 6px; background: #eee; border-radius: 4px; margin-top: 10px; overflow: hidden; display: none; }
   .bar-fill { height: 100%; width: 0%; background: #4caf50; transition: width .2s; }
   .bar-label { font-size: 12px; color: #777; margin-top: 4px; display: none; }
@@ -103,38 +106,36 @@
   <option>Instagram Feed Pictures</option>
 </select>
 
-<label>How many content pieces do you want to upload? <span class="req">*</span></label>
-<select id="piece_count">
-  <option value=""></option>
-  <script>document.write(Array.from({length: 12}, (_, i) => `<option>${i + 1}</option>`).join(""));</script>
-</select>
-
-<div id="pieces"></div>
+<label>Content Upload <span class="req">*</span></label>
+<div class="drop" id="drop">
+  <input type="file" id="file-input" multiple accept="video/*,image/*">
+  <div class="drop-text">Click to choose files or drag here — select as many at once as you like</div>
+</div>
+<div id="file-list"></div>
 
 <button id="submit" disabled>Upload</button>
 <div id="status"></div>
 
 <script>
-const pieceTpl = (index) => `
-  <div class="piece" data-index="${index}">
-    <label>Content Name <span class="req">*</span></label>
-    <input type="text" class="content-name" placeholder="e.g. reel_${index + 1}">
-    <label>Content Upload <span class="req">*</span></label>
-    <div class="drop">
-      <input type="file" class="file-input" accept="video/*,image/*">
-      <div class="drop-text">Click to choose a file or drag here</div>
-      <div class="fname"></div>
-      <div class="bar-track"><div class="bar-fill"></div></div>
-      <div class="bar-label"></div>
-    </div>
-  </div>
-`;
-
-const piecesEl = document.getElementById("pieces");
-const pieceCountEl = document.getElementById("piece_count");
 const modelEl = document.getElementById("model");
 const submitBtn = document.getElementById("submit");
 const statusEl = document.getElementById("status");
+const dropEl = document.getElementById("drop");
+const fileInputEl = document.getElementById("file-input");
+const fileListEl = document.getElementById("file-list");
+
+// Selected files live here, independent of the <input> (which we clear after
+// every pick so the same underlying browser dialog can add more on top of an
+// existing selection instead of replacing it).
+let selectedFiles = [];
+// Indices already fully uploaded — if Upload is clicked again after a
+// partial failure, these are skipped instead of being sent twice.
+let completedIndices = new Set();
+// Fixed once the first file's /init call returns, then reused for every
+// other file AND for every retry — so a whole batch (including a retry
+// after a partial failure) always lands in the same dated folder, even if
+// a retry happens to straddle midnight.
+const dateStrRef = { value: null };
 
 const nicheBlocks = {
   "Margaret Asian": document.getElementById("niche-margaret"),
@@ -150,34 +151,51 @@ modelEl.addEventListener("change", () => {
   validate();
 });
 
-pieceCountEl.addEventListener("change", () => {
-  const n = parseInt(pieceCountEl.value || "0", 10);
-  piecesEl.innerHTML = Array.from({ length: n }, (_, i) => pieceTpl(i)).join("");
-  piecesEl.querySelectorAll(".piece").forEach(wirePiece);
+function addFiles(fileList) {
+  selectedFiles.push(...Array.from(fileList));
+  renderFileList();
   validate();
-});
-
-function wirePiece(pieceEl) {
-  const drop = pieceEl.querySelector(".drop");
-  const input = pieceEl.querySelector(".file-input");
-  const fname = pieceEl.querySelector(".fname");
-  input.addEventListener("change", () => {
-    if (input.files[0]) fname.textContent = input.files[0].name;
-    validate();
-  });
-  drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("dragover"); });
-  drop.addEventListener("dragleave", () => drop.classList.remove("dragover"));
-  drop.addEventListener("drop", e => {
-    e.preventDefault();
-    drop.classList.remove("dragover");
-    if (e.dataTransfer.files[0]) {
-      input.files = e.dataTransfer.files;
-      fname.textContent = e.dataTransfer.files[0].name;
-      validate();
-    }
-  });
-  pieceEl.querySelector(".content-name").addEventListener("input", validate);
 }
+
+function removeFile(index) {
+  if (completedIndices.has(index)) return; // safety net, button is disabled anyway
+  selectedFiles.splice(index, 1);
+  // shift completed-index bookkeeping down past the removed item
+  completedIndices = new Set(Array.from(completedIndices, i => (i > index ? i - 1 : i)));
+  renderFileList();
+  validate();
+}
+
+function renderFileList() {
+  fileListEl.innerHTML = selectedFiles.map((f, i) => {
+    const done = completedIndices.has(i);
+    return `
+    <div class="file-row" data-index="${i}">
+      <div class="row-top">
+        <span class="fname">${done ? "✅ " : ""}${f.name} <span style="color:#999;font-weight:400">(${(f.size / 1024 / 1024).toFixed(1)} MB)</span></span>
+        <button type="button" class="remove" data-remove="${i}" ${done ? "disabled" : ""}>✕</button>
+      </div>
+      <div class="bar-track" style="${done ? "display:block" : ""}"><div class="bar-fill" style="${done ? "width:100%" : ""}"></div></div>
+      <div class="bar-label" style="${done ? "display:block" : ""}">${done ? "100% — already uploaded" : ""}</div>
+    </div>
+  `;
+  }).join("");
+  fileListEl.querySelectorAll("[data-remove]").forEach(btn => {
+    btn.addEventListener("click", () => removeFile(parseInt(btn.dataset.remove, 10)));
+  });
+}
+
+fileInputEl.addEventListener("change", () => {
+  if (fileInputEl.files.length) addFiles(fileInputEl.files);
+  fileInputEl.value = ""; // allow picking more on top of the existing selection
+});
+dropEl.addEventListener("dragover", e => { e.preventDefault(); dropEl.classList.add("dragover"); });
+dropEl.addEventListener("dragleave", () => dropEl.classList.remove("dragover"));
+dropEl.addEventListener("drop", e => {
+  e.preventDefault();
+  dropEl.classList.remove("dragover");
+  if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+});
 
 function currentNiche() {
   const block = nicheBlocks[modelEl.value];
@@ -189,20 +207,12 @@ function validate() {
   const model = modelEl.value;
   const vaName = document.getElementById("va_name").value;
   const contentType = document.getElementById("content_type").value;
-  const n = parseInt(pieceCountEl.value || "0", 10);
-  let ok = model && vaName && contentType && n > 0;
-  if (ok) {
-    const pieces = piecesEl.querySelectorAll(".piece");
-    if (pieces.length !== n) ok = false;
-    pieces.forEach(p => {
-      const name = p.querySelector(".content-name").value.trim();
-      const file = p.querySelector(".file-input").files[0];
-      if (!name || !file) ok = false;
-    });
-  }
+  const ok = model && vaName && contentType && selectedFiles.length > 0;
   submitBtn.disabled = !ok;
   return ok;
 }
+document.getElementById("va_name").addEventListener("change", validate);
+document.getElementById("content_type").addEventListener("change", validate);
 
 // ── Resumable upload to Google Drive (bytes go straight from this browser
 // to Google — never through our own server) ──────────────────────────────
@@ -260,11 +270,10 @@ async function uploadResumable(uploadUrl, file, onProgress) {
   }
 }
 
-async function uploadPiece(pieceEl, model, contentType, niche, vaName, dateStrRef) {
-  const file = pieceEl.querySelector(".file-input").files[0];
-  const bar = pieceEl.querySelector(".bar-track");
-  const fill = pieceEl.querySelector(".bar-fill");
-  const barLabel = pieceEl.querySelector(".bar-label");
+async function uploadOneFile(file, rowEl, model, contentType, niche, vaName, dateStrRef) {
+  const bar = rowEl.querySelector(".bar-track");
+  const fill = rowEl.querySelector(".bar-fill");
+  const barLabel = rowEl.querySelector(".bar-label");
   bar.style.display = "block";
   barLabel.style.display = "block";
 
@@ -309,12 +318,13 @@ document.getElementById("submit").addEventListener("click", async () => {
   const contentType = document.getElementById("content_type").value;
   const niche = currentNiche();
   const vaName = document.getElementById("va_name").value;
-  const dateStrRef = { value: null };
 
   try {
-    const pieces = Array.from(piecesEl.querySelectorAll(".piece"));
-    for (const p of pieces) {
-      await uploadPiece(p, model, contentType, niche, vaName, dateStrRef);
+    for (let i = 0; i < selectedFiles.length; i++) {
+      if (completedIndices.has(i)) continue; // already uploaded in a previous attempt
+      const rowEl = fileListEl.querySelector(`.file-row[data-index="${i}"]`);
+      await uploadOneFile(selectedFiles[i], rowEl, model, contentType, niche, vaName, dateStrRef);
+      completedIndices.add(i);
     }
     await fetch("/api/va-upload/finalize", {
       method: "POST",
@@ -323,9 +333,14 @@ document.getElementById("submit").addEventListener("click", async () => {
     });
     statusEl.className = "ok";
     statusEl.textContent = "✅ Done — all files uploaded.";
+    selectedFiles = [];
+    completedIndices = new Set();
+    dateStrRef.value = null;
+    renderFileList();
   } catch (err) {
     statusEl.className = "error";
-    statusEl.textContent = "❌ Error: " + err.message + "\nYou can just click Upload again — already-finished files won't be re-sent, but this simple probe doesn't yet skip them automatically.";
+    statusEl.textContent = "❌ Error: " + err.message + "\nAlready-finished files above are marked ✅ and won't be re-sent — just click Upload again to retry the rest.";
+    renderFileList();
     submitBtn.disabled = false;
   }
 });
