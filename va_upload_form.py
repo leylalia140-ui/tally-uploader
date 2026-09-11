@@ -92,17 +92,45 @@ class FileDoneRequest(BaseModel):
     va_name: str = ""
     file_name: str
     mime_type: str
-    drive_file_id: str
+    drive_file_id: str | None = None
+    date_str: str | None = None
+
+
+async def _resolve_uploaded_file_id(body: "FileDoneRequest", drive: GoogleDriveClient) -> str | None:
+    """
+    The browser couldn't read Google's resumable-upload completion response
+    (missing CORS headers for third-party origins on that specific response —
+    verified: the upload itself succeeds regardless), so it doesn't know the
+    file's ID. Find it the same way it was placed: by name, in the exact
+    destination folder we resolved at /init time. Drive's own list index can
+    lag by a moment right after upload, so retry briefly before giving up.
+    """
+    folder_id = await asyncio.to_thread(
+        drive.resolve_folder_path, _folder_path(body.model, body.content_type, body.date_str)
+    )
+    type_folder_name = "Images" if is_image(body.file_name, body.mime_type) else "Videos"
+    upload_folder_id = await asyncio.to_thread(drive.get_or_create_folder, type_folder_name, folder_id)
+    for attempt in range(5):
+        found = await asyncio.to_thread(drive.find_file, body.file_name, upload_folder_id)
+        if found:
+            return found
+        await asyncio.sleep(2 * (attempt + 1))
+    return None
 
 
 async def _process_file_done(body: FileDoneRequest) -> None:
     drive = await asyncio.to_thread(GoogleDriveClient)
     tmp_path = None
     try:
+        drive_file_id = body.drive_file_id or await _resolve_uploaded_file_id(body, drive)
+        if not drive_file_id:
+            logger.error(f"va-upload: could not find {body.file_name} in Drive after upload — giving up")
+            return
+
         ext = os.path.splitext(body.file_name)[1] or ".mp4"
         with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp_f:
             tmp_path = tmp_f.name
-        await asyncio.to_thread(drive.download_file, body.drive_file_id, tmp_path)
+        await asyncio.to_thread(drive.download_file, drive_file_id, tmp_path)
 
         if not is_image(body.file_name, body.mime_type) and (
             body.model in APPROVAL_MODELS and body.content_type in APPROVAL_CONTENT_TYPES

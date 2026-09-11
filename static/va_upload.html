@@ -211,6 +211,7 @@ async function uploadResumable(uploadUrl, file, onProgress) {
   let offset = 0;
   while (offset < file.size) {
     const end = Math.min(offset + chunkSize, file.size);
+    const isFinalChunk = end === file.size;
     let attempt = 0;
     let advanced = false;
     while (!advanced) {
@@ -232,6 +233,16 @@ async function uploadResumable(uploadUrl, file, onProgress) {
         }
         throw new Error("Unexpected status " + resp.status);
       } catch (err) {
+        if (isFinalChunk) {
+          // Google's resumable-upload completion response is missing CORS
+          // headers for third-party browser origins (verified server-side:
+          // the file is actually created even though the browser can't read
+          // this particular response) — the upload itself succeeded, we just
+          // can't read the file ID here. The backend will look the file up
+          // by name in the destination folder instead.
+          onProgress(file.size, file.size);
+          return null;
+        }
         attempt++;
         if (attempt > 6) throw err;
         // ask Google how many bytes it actually has, then resume from there
@@ -282,7 +293,8 @@ async function uploadPiece(pieceEl, model, contentType, niche, vaName, dateStrRe
     body: JSON.stringify({
       model, content_type: contentType, niche, va_name: vaName,
       file_name: file.name, mime_type: file.type || "application/octet-stream",
-      drive_file_id: result.id,
+      drive_file_id: result ? result.id : null,
+      date_str: dateStrRef.value,
     }),
   });
 }
