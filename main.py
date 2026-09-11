@@ -14,6 +14,7 @@ BERLIN = ZoneInfo("Europe/Berlin")
 
 import httpx
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Header
+from fastapi.staticfiles import StaticFiles
 from typing import Optional
 
 from config import (
@@ -39,6 +40,7 @@ _process_semaphore = asyncio.Semaphore(1)
 
 app = FastAPI(title="Tally → Drive → Telegram")
 app.include_router(va_upload_form.router)
+app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
 
 
 @app.on_event("startup")

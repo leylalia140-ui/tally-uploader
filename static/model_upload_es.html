@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Subir Contenido</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; max-width: 640px; margin: 60px auto; padding: 0 24px; color: #1a1a1a; }
+  h1 { font-size: 28px; margin-bottom: 40px; }
+  label { display: block; font-weight: 600; margin: 28px 0 8px; font-size: 15px; }
+  label .req { color: #888; font-weight: 400; }
+  .hint { font-size: 13px; color: #777; margin-top: -4px; }
+  select, input[type=text] { width: 100%; box-sizing: border-box; padding: 10px 12px; font-size: 15px; border: 1px solid #d5d5d5; border-radius: 8px; background: #fff; }
+  select:focus, input:focus { outline: none; border-color: #6b8afd; box-shadow: 0 0 0 3px rgba(107,138,253,.15); }
+  .drop {
+    margin-top: 8px; border: 1.5px dashed #c9c9c9; border-radius: 10px; padding: 28px 16px;
+    text-align: center; color: #777; cursor: pointer; font-size: 14px; position: relative;
+  }
+  .drop.dragover { border-color: #6b8afd; background: #f3f6ff; }
+  .drop input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .file-row { border: 1px solid #eee; border-radius: 8px; padding: 12px 14px; margin-top: 10px; }
+  .file-row .row-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .file-row .fname { font-weight: 600; color: #1a1a1a; word-break: break-all; font-size: 14px; }
+  .file-row .remove { background: none; border: none; color: #999; font-size: 18px; cursor: pointer; line-height: 1; padding: 0 4px; }
+  .file-row .remove:hover { color: #c0392b; }
+  .bar-track { height: 6px; background: #eee; border-radius: 4px; margin-top: 10px; overflow: hidden; display: none; }
+  .bar-fill { height: 100%; width: 0%; background: #4caf50; transition: width .2s; }
+  .bar-label { font-size: 12px; color: #777; margin-top: 4px; display: none; }
+  button#submit { margin-top: 36px; background: #1a1a1a; color: #fff; border: none; padding: 13px 26px; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; }
+  button#submit:disabled { opacity: .5; cursor: not-allowed; }
+  #status { margin-top: 20px; font-size: 14px; white-space: pre-line; }
+  #status.error { color: #c0392b; }
+  #status.ok { color: #2e7d32; }
+</style>
+</head>
+<body>
+
+<h1>Subir Contenido</h1>
+
+<label>¿Qué tipo de contenido estás subiendo? <span class="req">*</span></label>
+<select id="content_type">
+  <option value=""></option>
+  <option>Feed Content</option>
+  <option>PPV Content</option>
+  <option>Instagram Reels</option>
+  <option>Customs</option>
+</select>
+
+<label>¿Cuál es tu nombre de creadora? <span class="req">*</span></label>
+<input type="text" id="model" placeholder="Bella Sparks">
+<div class="hint">Por favor asegurate de escribir primero el nombre y después el apellido.</div>
+
+<label>Subir Archivos <span class="req">*</span></label>
+<div class="drop" id="drop">
+  <input type="file" id="file-input" multiple accept="video/*,image/*">
+  <div class="drop-text">Hacé clic o arrastrá archivos acá — podés elegir varios a la vez</div>
+</div>
+<div id="file-list"></div>
+
+<button id="submit" disabled>Subir</button>
+<div id="status"></div>
+
+<script src="/static/upload-common.js"></script>
+<script>
+const modelEl = document.getElementById("model");
+const contentTypeEl = document.getElementById("content_type");
+
+const { validate } = initUploadForm({
+  apiBase: "/api/model-upload",
+  getPayloadFields: () => ({ model: modelEl.value.trim(), content_type: contentTypeEl.value }),
+  isValid: () => modelEl.value.trim() && contentTypeEl.value,
+  successText: "✅ Listo — todos los archivos se subieron correctamente.",
+  errorPrefix: "❌ Error: ",
+  errorSuffix: "\nLos archivos ya subidos están marcados con ✅ arriba y no se van a reenviar — solo hacé clic en Subir de nuevo.",
+});
+
+modelEl.addEventListener("input", validate);
+contentTypeEl.addEventListener("change", validate);
+</script>
+
+</body>
+</html>
