@@ -2,6 +2,7 @@ import io
 import logging
 import os
 from typing import Optional
+import httpx
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 from google.oauth2.credentials import Credentials
@@ -32,6 +33,7 @@ class GoogleDriveClient:
         if creds.expired or not creds.valid:
             creds.refresh(Request())
 
+        self.creds = creds
         self.service = build("drive", "v3", credentials=creds)
 
     # ──────────────────────────────────────────
@@ -178,3 +180,36 @@ class GoogleDriveClient:
             supportsAllDrives=True,
         ).execute()
         return f"https://drive.google.com/drive/folders/{folder_id}?usp=sharing"
+
+    # ──────────────────────────────────────────
+    # Resumable upload sessions (for client-side / browser-direct uploads)
+    # ──────────────────────────────────────────
+
+    def create_resumable_session(self, file_name: str, folder_id: str, mime_type: str) -> str:
+        """
+        Start a resumable-upload session for a file that will be uploaded directly
+        by an external client (the browser), never touching our own server.
+        Returns the session URI (valid ~1 week) — the client PUTs file bytes to
+        this URI in chunks and does NOT need our access token to do so.
+        """
+        if self.creds.expired or not self.creds.valid:
+            self.creds.refresh(Request())
+        resp = httpx.post(
+            "https://www.googleapis.com/upload/drive/v3/files",
+            params={"uploadType": "resumable", "supportsAllDrives": "true"},
+            headers={
+                "Authorization": f"Bearer {self.creds.token}",
+                "Content-Type": "application/json; charset=UTF-8",
+                "X-Upload-Content-Type": mime_type,
+            },
+            json={"name": file_name, "parents": [folder_id]},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        session_uri = resp.headers.get("Location")
+        if not session_uri:
+            raise RuntimeError(f"No resumable session URI in response: {resp.status_code} {resp.text}")
+        return session_uri
+
+    def get_file_metadata(self, file_id: str, fields: str = "id, name, md5Checksum, size") -> dict:
+        return self.service.files().get(fileId=file_id, fields=fields, supportsAllDrives=True).execute()

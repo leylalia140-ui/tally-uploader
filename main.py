@@ -26,6 +26,7 @@ import approval_log
 from drive import GoogleDriveClient
 from dateutil_local import format_date
 import telegram_bot
+import va_upload_form
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,6 +38,7 @@ logger = logging.getLogger(__name__)
 _process_semaphore = asyncio.Semaphore(1)
 
 app = FastAPI(title="Tally → Drive → Telegram")
+app.include_router(va_upload_form.router)
 
 
 @app.on_event("startup")

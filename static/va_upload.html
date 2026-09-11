@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VA Content Upload</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; max-width: 640px; margin: 60px auto; padding: 0 24px; color: #1a1a1a; }
+  h1 { font-size: 28px; margin-bottom: 40px; }
+  label { display: block; font-weight: 600; margin: 28px 0 8px; font-size: 15px; }
+  label .req { color: #888; font-weight: 400; }
+  select, input[type=text] { width: 100%; box-sizing: border-box; padding: 10px 12px; font-size: 15px; border: 1px solid #d5d5d5; border-radius: 8px; background: #fff; }
+  select:focus, input:focus { outline: none; border-color: #6b8afd; box-shadow: 0 0 0 3px rgba(107,138,253,.15); }
+  .hidden { display: none !important; }
+  .piece { border-top: 1px solid #eee; padding-top: 8px; margin-top: 20px; }
+  .drop {
+    margin-top: 8px; border: 1.5px dashed #c9c9c9; border-radius: 10px; padding: 28px 16px;
+    text-align: center; color: #777; cursor: pointer; font-size: 14px; position: relative;
+  }
+  .drop.dragover { border-color: #6b8afd; background: #f3f6ff; }
+  .drop input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .drop .fname { margin-top: 6px; font-weight: 600; color: #1a1a1a; word-break: break-all; }
+  .bar-track { height: 6px; background: #eee; border-radius: 4px; margin-top: 10px; overflow: hidden; display: none; }
+  .bar-fill { height: 100%; width: 0%; background: #4caf50; transition: width .2s; }
+  .bar-label { font-size: 12px; color: #777; margin-top: 4px; display: none; }
+  button#submit { margin-top: 36px; background: #1a1a1a; color: #fff; border: none; padding: 13px 26px; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; }
+  button#submit:disabled { opacity: .5; cursor: not-allowed; }
+  #status { margin-top: 20px; font-size: 14px; white-space: pre-line; }
+  #status.error { color: #c0392b; }
+  #status.ok { color: #2e7d32; }
+</style>
+</head>
+<body>
+
+<h1>VA Content Upload</h1>
+
+<label>For Which Model are you uploading Content? <span class="req">*</span></label>
+<select id="model">
+  <option value=""></option>
+  <option>Margaret Asian</option>
+  <option>Abby Parker</option>
+  <option>Yuki Chen</option>
+  <option>Bertha Butts</option>
+</select>
+
+<div id="niche-margaret" class="hidden">
+  <label>Margaret Niche</label>
+  <select class="niche-select">
+    <option value=""></option>
+    <option>Snapchat Based Reels</option>
+    <option>School Girl Reels</option>
+    <option>Interview Reels</option>
+    <option>Instagram FEED PICTURES</option>
+    <option>GERMAN Schhol Girl Reels</option>
+  </select>
+</div>
+
+<div id="niche-abby" class="hidden">
+  <label>Abby Niche</label>
+  <select class="niche-select">
+    <option value=""></option>
+    <option>Snapchat Based Reels</option>
+    <option>School Girl Reels</option>
+    <option>Interview Reels</option>
+    <option>Instagram FEED PICTURES</option>
+    <option>GERMAN School Girl Reels</option>
+  </select>
+</div>
+
+<div id="niche-yuki" class="hidden">
+  <label>Yuki Niche</label>
+  <select class="niche-select">
+    <option value=""></option>
+    <option>Snapchat Based Reels</option>
+    <option>School Girl Reels</option>
+    <option>Interview Reels</option>
+    <option>GERMAN School Girl Reels</option>
+  </select>
+</div>
+
+<div id="niche-bertha" class="hidden">
+  <label>Bertha Niche</label>
+  <select class="niche-select">
+    <option value=""></option>
+    <option>Snapchat Based Reels</option>
+    <option>School Girl Reels</option>
+    <option>Interview Reels</option>
+    <option>Instagram FEED PICTURES</option>
+  </select>
+</div>
+
+<label>Who is uploading this? <span class="req">*</span></label>
+<select id="va_name">
+  <option value=""></option>
+  <option>Ken</option>
+  <option>James</option>
+</select>
+
+<label>What kind of Content? <span class="req">*</span></label>
+<select id="content_type">
+  <option value=""></option>
+  <option>Instagram AI Reels</option>
+  <option>Instagram Feed Pictures</option>
+</select>
+
+<label>How many content pieces do you want to upload? <span class="req">*</span></label>
+<select id="piece_count">
+  <option value=""></option>
+  <script>document.write(Array.from({length: 12}, (_, i) => `<option>${i + 1}</option>`).join(""));</script>
+</select>
+
+<div id="pieces"></div>
+
+<button id="submit" disabled>Upload</button>
+<div id="status"></div>
+
+<script>
+const pieceTpl = (index) => `
+  <div class="piece" data-index="${index}">
+    <label>Content Name <span class="req">*</span></label>
+    <input type="text" class="content-name" placeholder="e.g. reel_${index + 1}">
+    <label>Content Upload <span class="req">*</span></label>
+    <div class="drop">
+      <input type="file" class="file-input" accept="video/*,image/*">
+      <div class="drop-text">Click to choose a file or drag here</div>
+      <div class="fname"></div>
+      <div class="bar-track"><div class="bar-fill"></div></div>
+      <div class="bar-label"></div>
+    </div>
+  </div>
+`;
+
+const piecesEl = document.getElementById("pieces");
+const pieceCountEl = document.getElementById("piece_count");
+const modelEl = document.getElementById("model");
+const submitBtn = document.getElementById("submit");
+const statusEl = document.getElementById("status");
+
+const nicheBlocks = {
+  "Margaret Asian": document.getElementById("niche-margaret"),
+  "Abby Parker": document.getElementById("niche-abby"),
+  "Yuki Chen": document.getElementById("niche-yuki"),
+  "Bertha Butts": document.getElementById("niche-bertha"),
+};
+
+modelEl.addEventListener("change", () => {
+  Object.values(nicheBlocks).forEach(el => el.classList.add("hidden"));
+  const block = nicheBlocks[modelEl.value];
+  if (block) block.classList.remove("hidden");
+  validate();
+});
+
+pieceCountEl.addEventListener("change", () => {
+  const n = parseInt(pieceCountEl.value || "0", 10);
+  piecesEl.innerHTML = Array.from({ length: n }, (_, i) => pieceTpl(i)).join("");
+  piecesEl.querySelectorAll(".piece").forEach(wirePiece);
+  validate();
+});
+
+function wirePiece(pieceEl) {
+  const drop = pieceEl.querySelector(".drop");
+  const input = pieceEl.querySelector(".file-input");
+  const fname = pieceEl.querySelector(".fname");
+  input.addEventListener("change", () => {
+    if (input.files[0]) fname.textContent = input.files[0].name;
+    validate();
+  });
+  drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("dragover"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("dragover"));
+  drop.addEventListener("drop", e => {
+    e.preventDefault();
+    drop.classList.remove("dragover");
+    if (e.dataTransfer.files[0]) {
+      input.files = e.dataTransfer.files;
+      fname.textContent = e.dataTransfer.files[0].name;
+      validate();
+    }
+  });
+  pieceEl.querySelector(".content-name").addEventListener("input", validate);
+}
+
+function currentNiche() {
+  const block = nicheBlocks[modelEl.value];
+  if (!block) return "";
+  return block.querySelector(".niche-select").value;
+}
+
+function validate() {
+  const model = modelEl.value;
+  const vaName = document.getElementById("va_name").value;
+  const contentType = document.getElementById("content_type").value;
+  const n = parseInt(pieceCountEl.value || "0", 10);
+  let ok = model && vaName && contentType && n > 0;
+  if (ok) {
+    const pieces = piecesEl.querySelectorAll(".piece");
+    if (pieces.length !== n) ok = false;
+    pieces.forEach(p => {
+      const name = p.querySelector(".content-name").value.trim();
+      const file = p.querySelector(".file-input").files[0];
+      if (!name || !file) ok = false;
+    });
+  }
+  submitBtn.disabled = !ok;
+  return ok;
+}
+
+// ── Resumable upload to Google Drive (bytes go straight from this browser
+// to Google — never through our own server) ──────────────────────────────
+async function uploadResumable(uploadUrl, file, onProgress) {
+  const chunkSize = 8 * 1024 * 1024; // 8 MiB
+  let offset = 0;
+  while (offset < file.size) {
+    const end = Math.min(offset + chunkSize, file.size);
+    let attempt = 0;
+    let advanced = false;
+    while (!advanced) {
+      try {
+        const resp = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Range": `bytes ${offset}-${end - 1}/${file.size}` },
+          body: file.slice(offset, end),
+        });
+        if (resp.status === 200 || resp.status === 201) {
+          onProgress(file.size, file.size);
+          return await resp.json();
+        }
+        if (resp.status === 308) {
+          onProgress(end, file.size);
+          offset = end;
+          advanced = true;
+          break;
+        }
+        throw new Error("Unexpected status " + resp.status);
+      } catch (err) {
+        attempt++;
+        if (attempt > 6) throw err;
+        // ask Google how many bytes it actually has, then resume from there
+        try {
+          const rangeResp = await fetch(uploadUrl, {
+            method: "PUT",
+            headers: { "Content-Range": `bytes */${file.size}` },
+          });
+          const range = rangeResp.headers.get("Range");
+          if (range) offset = parseInt(range.split("-")[1], 10) + 1;
+        } catch (e2) { /* network still down, just retry current offset */ }
+        await new Promise(r => setTimeout(r, 1000 * attempt));
+      }
+    }
+  }
+}
+
+async function uploadPiece(pieceEl, model, contentType, niche, vaName, dateStrRef) {
+  const file = pieceEl.querySelector(".file-input").files[0];
+  const bar = pieceEl.querySelector(".bar-track");
+  const fill = pieceEl.querySelector(".bar-fill");
+  const barLabel = pieceEl.querySelector(".bar-label");
+  bar.style.display = "block";
+  barLabel.style.display = "block";
+
+  const initResp = await fetch("/api/va-upload/init", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model, content_type: contentType, file_name: file.name,
+      mime_type: file.type || "application/octet-stream",
+      date_str: dateStrRef.value,
+    }),
+  });
+  if (!initResp.ok) throw new Error("init failed: " + await initResp.text());
+  const initData = await initResp.json();
+  dateStrRef.value = initData.date_str;
+
+  const result = await uploadResumable(initData.upload_url, file, (done, total) => {
+    const pct = Math.round((done / total) * 100);
+    fill.style.width = pct + "%";
+    barLabel.textContent = `${pct}% (${(done / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} MB)`;
+  });
+
+  await fetch("/api/va-upload/file-done", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model, content_type: contentType, niche, va_name: vaName,
+      file_name: file.name, mime_type: file.type || "application/octet-stream",
+      drive_file_id: result.id,
+    }),
+  });
+}
+
+document.getElementById("submit").addEventListener("click", async () => {
+  if (!validate()) return;
+  submitBtn.disabled = true;
+  statusEl.className = "";
+  statusEl.textContent = "Uploading...";
+
+  const model = modelEl.value;
+  const contentType = document.getElementById("content_type").value;
+  const niche = currentNiche();
+  const vaName = document.getElementById("va_name").value;
+  const dateStrRef = { value: null };
+
+  try {
+    const pieces = Array.from(piecesEl.querySelectorAll(".piece"));
+    for (const p of pieces) {
+      await uploadPiece(p, model, contentType, niche, vaName, dateStrRef);
+    }
+    await fetch("/api/va-upload/finalize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model, content_type: contentType, date_str: dateStrRef.value }),
+    });
+    statusEl.className = "ok";
+    statusEl.textContent = "✅ Done — all files uploaded.";
+  } catch (err) {
+    statusEl.className = "error";
+    statusEl.textContent = "❌ Error: " + err.message + "\nYou can just click Upload again — already-finished files won't be re-sent, but this simple probe doesn't yet skip them automatically.";
+    submitBtn.disabled = false;
+  }
+});
+</script>
+
+</body>
+</html>
